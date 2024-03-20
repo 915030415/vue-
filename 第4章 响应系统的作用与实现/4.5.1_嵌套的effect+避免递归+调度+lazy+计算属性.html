@@ -7,27 +7,43 @@
   </head>
   <body>
     <script>
-      const data = { foo: 'hello world', bar: '111' };
+      const data = { foo: 1, bar: 2 };
       let temp1, temp2;
       let activeEffect;
 
-      const activeEffectStack = [];
-
+      const activeEffectStack = []; // 副作用函数的栈
       const bucket = new WeakMap(); // 副作用函数的桶 使用WeakMap
+      const jobQueue = new Set(); // 任务队列 自动会去重 副作用函数
+      let isFlushing = false; // 是否正在刷新队列
+      let p = Promise.resolve(); // 用来创建一个微任务队列把 副作用 函数放在微任务队列里面去
+      function flushJob() {
+        if (isFlushing) return;
+        isFlushing = true;
+        p.then(() => {
+          jobQueue.forEach((job) => job());
+        }).finally(() => {
+          isFlushing = false;
+        });
+      }
 
-      function effect(fn) {
+      function effect(fn, options = {}) {
         const funEffect = function () {
           cleanEffect(funEffect);
           activeEffect = funEffect; // 这里每次都是最新的 如果嵌套了 就会导致 嵌套的 fn 执行完后  没有恢复 所以这里要保存之前的funEffect
           activeEffectStack.push(activeEffect);
-          fn();
+          const res = fn();
           // 执行完之后 恢复 activeEffect
           // 先把它从 activeEffectStack 移除掉 执行完的 funEffect
           activeEffectStack.pop();
           activeEffect = activeEffectStack[activeEffectStack.length - 1];
+          return res;
         };
+        funEffect.options = options;
         funEffect.deps = [];
-        funEffect(); // 执行副作用函数
+        if (!options.lazy) {
+          funEffect(); // 执行副作用函数
+        }
+        return funEffect;
       }
 
       function cleanEffect(funEffect) {
@@ -80,20 +96,83 @@
 
         const newDeps = new Set(deps); // 创建一个 新的 Set
 
-        newDeps && newDeps.forEach((fn) => fn()); // 要这么写 循环和 新增 deps 操作的是两个 set []
+        newDeps &&
+          newDeps.forEach((fn) => {
+            if (fn.options.scheduler) {
+              fn.options.scheduler(fn);
+            } else if (fn !== activeEffect) {
+              // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+              fn();
+            }
+          }); // 要这么写 循环和 新增 deps 操作的是两个 set []
 
         return true; // 返回true
       }
 
-      effect(() => {
-        console.log(1, 'log');
-        effect(() => {
-          console.log(2, 'log');
-          temp2 = obj.bar;
+      function computed(getter) {
+        let value;
+        let dirty = true;
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler(fn) {
+            // 这里不用执行fn  effectFn 就是 fn 返回出去了让 用户获取的时候再去执行
+            dirty = true;
+            trigger(obj, 'value'); // 当 getter 酣睡里面的 数据 被改变了 会触发执行 这个scheduler 函数 然后我们 trigger 触发 去执行   track(obj, 'value'); 收集的 当 computed 取值的时候 把当前的副作用函数
+          },
         });
-        temp1 = obj.foo;
+
+        const obj = {
+          get value() {
+            if (dirty) {
+              value = effectFn();
+              dirty = false;
+            }
+            if (activeEffect) {
+              // 当 computed 取值的时候 把当前的副作用函数 收集到 全局的桶中
+              track(obj, 'value');
+            }
+            return value;
+          },
+        };
+        return obj;
+      }
+
+      // effect(() => {
+      //   console.log(1, 'log');
+      //   effect(() => {
+      //     console.log(2, 'log');
+      //     temp2 = obj.bar;
+      //   });
+      //   temp1 = obj.foo;
+      //   obj.foo++;
+      // });
+      // obj.foo = 222;
+
+      // effect(
+      //   () => {
+      //     console.log(obj.foo);
+      //   },
+      //   {
+      //     scheduler(fn) {
+      //       jobQueue.add(fn);
+      //       flushJob();
+      //     },
+      //     lazy: true,
+      //   }
+      // );
+
+      // obj.foo++;
+      // obj.foo++;
+
+      // console.log('结束了');
+
+      const computedData = computed(() => obj.foo + obj.bar);
+
+      effect(() => {
+        console.log(computedData.value);
       });
-      obj.foo = 222;
+
+      obj.foo++;
     </script>
   </body>
 </html>
