@@ -166,13 +166,58 @@
 
       // console.log('结束了');
 
-      const computedData = computed(() => obj.foo + obj.bar);
+      // const computedData = computed(() => obj.foo + obj.bar);
 
-      effect(() => {
-        console.log(computedData.value);
-      });
+      // effect(() => {
+      //   console.log(computedData.value);
+      // });
 
-      obj.foo++;
+      // obj.foo++;
+
+      function traverse(value, seen = new Set()) {
+        // 这里的作用就是递归的去读取 value 里面的所有属性 让Effect 收集到每个属性 然后 修改value的时候都可以触发 cb
+        // seen 防止 循环引用的
+        if (!value || typeof value !== 'object' || seen.has(value)) return; // 先不考虑数组的情况
+        seen.add(value);
+        for (const k in value) {
+          traverse(value[k], seen);
+        }
+        return value;
+      }
+
+      // source 可以是 getter 可以是一个 响应式对象
+      function watch(source, cb) {
+        let getter;
+        let newValue, oldValue;
+        if (typeof source === 'function') {
+          getter = source;
+        } else {
+          getter = () => traverse(source);
+        }
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler(fn) {
+            newValue = effectFn();
+            console.log(fn === effectFn, 'asdfasf'); // true
+            cb(oldValue, newValue);
+            oldValue = newValue;
+          },
+        });
+        oldValue = effectFn();
+      }
+
+      // watch(obj, (oldValue, newValue) => {
+      //   console.log(oldValue, 'log', newValue, oldValue === newValue); // true
+      // });
+      // obj.bar++;
+
+      watch(
+        () => obj.bar,
+        (oldValue, newValue) => {
+          console.log(oldValue, 'log', newValue, oldValue === newValue); // 2 3 false
+        }
+      );
+      obj.bar++;
     </script>
   </body>
 </html>
