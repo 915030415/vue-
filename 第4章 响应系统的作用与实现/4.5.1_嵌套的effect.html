@@ -2,30 +2,29 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Title</title>
-    <style>
-      ion-icon {
-        .a {
-          color: red;
-        }
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
   </head>
   <body>
-    <ion-icon>
-      <div class="a">sdfsdfasf</div>
-    </ion-icon>
     <script>
-      const data = { text: 'hello world', ok: true };
+      const data = { foo: 'hello world', bar: '111' };
+      let temp1, temp2;
       let activeEffect;
-      // const bucket = new Set() // 副作用函数的桶
+
+      const activeEffectStack = [];
+
       const bucket = new WeakMap(); // 副作用函数的桶 使用WeakMap
 
       function effect(fn) {
         const funEffect = function () {
           cleanEffect(funEffect);
-          activeEffect = funEffect;
+          activeEffect = funEffect; // 这里每次都是最新的 如果嵌套了 就会导致 嵌套的 fn 执行完后  没有恢复 所以这里要保存之前的funEffect
+          activeEffectStack.push(activeEffect);
           fn();
+          // 执行完之后 恢复 activeEffect
+          // 先把它从 activeEffectStack 移除掉 执行完的 funEffect
+          activeEffectStack.pop();
+          activeEffect = activeEffectStack[activeEffectStack.length - 1];
         };
         funEffect.deps = [];
         funEffect(); // 执行副作用函数
@@ -87,27 +86,14 @@
       }
 
       effect(() => {
-        console.log('effect run1');
-        document.body.innerHTML = obj.text;
+        console.log(1, 'log');
+        effect(() => {
+          console.log(2, 'log');
+          temp2 = obj.bar;
+        });
+        temp1 = obj.foo;
       });
-
-      effect(() => {
-        console.log('effect run2');
-        document.body.innerHTML = obj.ok ? obj.text : 'asff';
-      });
-
-      console.log(bucket, 'log');
-
-      setTimeout(() => {
-        obj.text = 'heeeeeeeeee';
-        obj.ok = false;
-      }, 1000);
-
-      setTimeout(() => {
-        obj.text = 'heeeeeeeeee';
-      }, 2000);
-
-      //  run1 run 2 run1 run2 run2
+      obj.foo = 222;
     </script>
   </body>
 </html>
