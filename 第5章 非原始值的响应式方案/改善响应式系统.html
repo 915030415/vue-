@@ -10,6 +10,11 @@
       const data = { foo: 1, bar: 2 };
       let temp1, temp2;
       let activeEffect;
+      const TriggerType = {
+        SET: 'SET',
+        ADD: 'ADD',
+        DELETE: 'DELETE',
+      };
 
       const activeEffectStack = []; // 副作用函数的栈
       const bucket = new WeakMap(); // 副作用函数的桶 使用WeakMap
@@ -55,22 +60,6 @@
         funEffect.deps.length = 0;
       }
 
-      const objProxy = new Proxy(data, {
-        get(target, p, receiver) {
-          // receiver 代表谁在读取属性 类似于this  如何是通过代理对象 objProxy.foo 读取属性 这里的 receiver 就是 objProxy
-          // 然后 Reflect.get(target, p, receiver);receiver 就是objProx  这样可以防止丢失响应式 因为有时候可以在 对象内部
-          // const data = { foo: 1, bar: 2, get c(){return this.foo} }; 这里的 this为 data 不是通过 objProxy 代理访问的 就会 丢失响应式 foo 改变了 读取了c的副作用函数也不会执行 必须
-          // 必须 Reflect.get(target, p, receiver) 让this 强行为 代理对象 objProxy 这样才具有响应式
-          track(target, p);
-          return Reflect.get(...arguments);
-        },
-        set(target, p, value, receiver) {
-          Reflect.set(...arguments); // 设置属性值
-          trigger(target, p); // 把副作用函数取出并执行
-          return Reflect.set(...arguments);
-        },
-      });
-
       // track函数
       function track(target, key) {
         if (!activeEffect) return target[key]; // 没有正在执行的副作用函数 直接返回
@@ -90,27 +79,44 @@
       }
 
       // trigger函数
-      function trigger(target, key) {
+      function trigger(target, key, type) {
         const depsMap = bucket.get(target); // target Map
-        if (!depsMap) return true;
+        if (!depsMap) return;
         const deps = depsMap.get(key); // effectFn Set
+
+        const iterateEffects = depsMap.get(ITERATE_KEY);
 
         // deps && deps.forEach((fn) => fn()); // 这里不能这样写  虽然 cleanEffect 清除了
         //  但因为 执行fn的时候 又会重新收集依赖   deps.add(activeEffect); // 将副作用函数加进去 又会重新 add进去  deps 会一直删 一直加 就会无限循环的执行fn
 
-        const newDeps = new Set(deps); // 创建一个 新的 Set
+        const effectToRun = new Set();
 
-        newDeps &&
-          newDeps.forEach((fn) => {
-            if (fn.options.scheduler) {
-              fn.options.scheduler(fn);
-            } else if (fn !== activeEffect) {
+        deps &&
+          deps.forEach((fn) => {
+            if (fn !== activeEffect) {
               // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
-              fn();
+              effectToRun.add(fn);
             }
-          }); // 要这么写 循环和 新增 deps 操作的是两个 set []
+          });
 
-        return true; // 返回true
+        if (type === TriggerType.ADD || type === TriggerType.DELETE) {
+          iterateEffects &&
+            iterateEffects.forEach((fn) => {
+              if (fn !== activeEffect) {
+                // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+                effectToRun.add(fn);
+              }
+            });
+        }
+
+        effectToRun.forEach((fn) => {
+          if (fn.options.scheduler) {
+            fn.options.scheduler(fn);
+          } else if (fn !== activeEffect) {
+            // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+            fn();
+          }
+        });
       }
 
       function computed(getter) {
@@ -140,43 +146,6 @@
         };
         return ob;
       }
-
-      // effect(() => {
-      //   console.log(1, 'log');
-      //   effect(() => {
-      //     console.log(2, 'log');
-      //     temp2 = objProxy.bar;
-      //   });
-      //   temp1 = objProxy.foo;
-      //   objProxy.foo++;
-      // });
-      // objProxy.foo = 222;
-
-      // effect(
-      //   () => {
-      //     console.log(objProxy.foo);
-      //   },
-      //   {
-      //     scheduler(fn) {
-      //       jobQueue.add(fn);
-      //       flushJob();
-      //     },
-      //     lazy: true,
-      //   }
-      // );
-
-      // objProxy.foo++;
-      // objProxy.foo++;
-
-      // console.log('结束了');
-
-      // const computedData = computed(() => objProxy.foo + objProxy.bar);
-
-      // effect(() => {
-      //   console.log(computedData.value);
-      // });
-
-      // objProxy.foo++;
 
       function traverse(value, seen = new Set()) {
         // 这里的作用就是递归的去读取 value 里面的所有属性 让Effect 收集到每个属性 然后 修改value的时候都可以触发 cb
@@ -230,29 +199,112 @@
         }
       }
 
-      // watch(objProxy, (oldValue, newValue) => {
-      //   console.log(oldValue, 'log', newValue, oldValue === newValue); // true
-      // });
-      // objProxy.bar++;
-
-      // watch(
-      //   () => objProxy.bar,
-      //   (oldValue, newValue) => {
-      //     console.log(newValue, 'log');
+      // const objProxy = new Proxy(data, {
+      //   get(target, p, receiver) {
+      //     // receiver 代表谁在读取属性 类似于this  如何是通过代理对象 objProxy.foo 读取属性 这里的 receiver 就是 objProxy
+      //     // 然后 Reflect.get(target, p, receiver);receiver 就是objProx  这样可以防止丢失响应式 因为有时候可以在 对象内部
+      //     // const data = { foo: 1, bar: 2, get c(){return this.foo} }; 这里的 this为 data 不是通过 objProxy 代理访问的 就会 丢失响应式 foo 改变了 读取了c的副作用函数也不会执行 必须
+      //     // 必须 Reflect.get(target, p, receiver) 让this 强行为 代理对象 objProxy 这样才具有响应式
+      //     track(target, p);
+      //     return Reflect.get(...arguments);
       //   },
-      //   // immediate 回调函数立即执行一次
-      //   // flush 控制回调函数的执行时机  post代表调度函数需要将副作用函数放到一
-      //   // 个微任务队列中，并等待 DOM 更新结束后再执行，
-      //   { immediate: true, flush: 'post' }
-      // );
-      // objProxy.bar++;
-      // console.log(111, 'log');
-
-      // effect(() => {
-      //   console.log(objProxy.ccc, 'log');
+      //   set(target, p, value, receiver) {
+      //     Reflect.set(...arguments); // 设置属性值
+      //     trigger(target, p); // 把副作用函数取出并执行
+      //     return Reflect.set(...arguments);
+      //   },
       // });
-      // console.log(bucket, 'log');
-      // objProxy.ccc = 1;
+
+      const ITERATE_KEY = Symbol('iterate key'); // 用于 for in 循环 没有key 参数  因为for in 对应的所有的key 没有具体的key 所以用这个代替
+      function reactive(obj) {
+        return new Proxy(obj, {
+          get(target, p, receiver) {
+            if (p === 'raw') {
+              // 在这里去拦截 set 里面 receiver.raw 的操作
+              // proxy.raw可以取得他的代理对象target
+              return target;
+            }
+            track(target, p);
+            return Reflect.get(...arguments);
+          },
+          set(target, p, value, receiver) {
+            const type = Object.prototype.hasOwnProperty.call(target)
+              ? TriggerType.SET
+              : TriggerType.ADD; // 判断是设置对象还是新增对象
+
+            const oldValue = Reflect.set(...arguments);
+            // 例子1:设置对象上一个 不存在的属性 prototype上的set 也会执行 如果是自身有的 就只会执行自身的 set
+            // 这里 需要解决这种 现象 屏蔽 父对象的 set 执行 解决办法 判断一下  receiver.raw 属性是不是 等于 target 因为
+            // 通过子设置子对象没有的属性触发的 父对象的set的时候 receiver 始终指向的是 最开始操作的代理 也就是 子对象的代理 这种情况下 target是父对象
+            if (receiver.raw === target) {
+              // 这里就代表 是修改操作 否则是 例子1 的操作 因为  receiver.raw 不等于 子target
+              if (
+                oldValue !== value &&
+                (!Number.isNaN(oldValue) || !Number.isNaN(value))
+              ) {
+                // oldValue !== value 值没变就没变触发了
+                // 如果是新增对象的话 就得触发 key 为 ITERATE_KEY 的 deps 因为  触发for in 循环的 副作用函数
+                // 新旧值对比, 且新旧值 不都是 NaN, 才执行更新
+                trigger(target, p, type); // 把副作用函数取出并执行
+              }
+            }
+            return oldValue;
+          },
+          has(target, p) {
+            // 拦截 in 操作符, in操作符内部最终调用了对象的[[HasProperty]]内部方法，该内部方法可以被Proxy的has拦截函数拦截
+            track(target, p);
+            return Reflect.has(...arguments);
+          },
+          ownKeys(target) {
+            // 拦截 for in 循环，只有target参数
+            track(target, ITERATE_KEY);
+            return Reflect.ownKeys(...arguments);
+          },
+          deleteProperty(target, p) {
+            // 拦截delete操作, delete操作也会影响for in 循环，所以传递DELETE参数到trigger函数
+            const hasKey = Object.prototype.hasOwnProperty.call(target, p); // 测试target是否有这个property
+            const res = Reflect.deleteProperty(target, p);
+            if (hasKey && res) {
+              // 删除成功且target有这个key
+              trigger(target, p, 'DELETE');
+            }
+            return res;
+          },
+        });
+      }
+
+      // let a = { b: 1, c: 2 };
+      // let proxyA = reactive(a);
+      // effect(
+      //   () => {
+      //     for (let key in proxyA) {
+      //       console.log(key, 'log');
+      //     }
+      //     // console.log('c' in proxyA, 'log');
+      //   },
+      //   {
+      //     scheduler(effect) {
+      //       jobQueue.add(effect);
+      //       flushJob();
+      //     },
+      //   }
+      // );
+      // proxyA.c = 2;
+      // delete proxyA.b;
+      // proxyA.d = 1;
+
+      // 测试 继承
+      let a = { s: 1 };
+      let b = { c: 1 };
+      let c = reactive(a);
+      let d = reactive(b);
+      Object.setPrototypeOf(c, d);
+      effect(() => {
+        console.log('c上设置c没有的属性看会执行几次， ', 'log', c.a);
+        // 开始默认执行了一次 后面由c自己set触发执行了一次 d的set虽然触发了但没有 trigger；
+      });
+      c.a = 2;
+      // console.log(c, 'log');
     </script>
   </body>
 </html>

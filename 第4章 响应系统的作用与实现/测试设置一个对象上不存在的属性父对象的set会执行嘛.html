@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <script>
+      // 对new Proxy的一层封装
+      function reactive(obj) {
+        return new Proxy(obj, {
+          get(target, p, receiver) {
+            console.log(222, 'log');
+            return Reflect.get(...arguments);
+          },
+          set(target, p, value, receiver) {
+            console.log(111, 'log', target);
+            const oldValue = target[p]; // 新旧值对比，不同才更新
+            const res = Reflect.set(...arguments);
+            return res;
+          },
+        });
+      }
+      let a = { s: 1 };
+      let b = { c: 1 };
+      let c = reactive(a);
+      let d = reactive(b);
+      // Object.setPrototypeOf(c, d);
+      // console.log(c.c, 'log');
+      // c.a = 2;
+      // c.s = 3;
+      // 结论 设置对象上一个 不存在的属性 prototype上的set 也会执行 如果是自身有的 就只会执行自身的 set
+
+      // console.log(c, 'log');
+    </script>
+  </body>
+</html>

@@ -139,17 +139,17 @@ function reactive(obj) {
     })
 }
 
-const obj = {},
-    proto = {bar: 1},
-    child = reactive(obj),
-    parent = reactive(proto)
-// 使用parent作为child的原型
-Object.setPrototypeOf(child, parent)
-// child.raw === obj, parent.raw === proto
+// const obj = {},
+//     proto = {bar: 1},
+//     child = reactive(obj),
+//     parent = reactive(proto)
+// // 使用parent作为child的原型
+// Object.setPrototypeOf(child, parent)
+// // child.raw === obj, parent.raw === proto
 
-effect(() => {
-    console.log('effect~')
-    console.log(child.bar)
-})
-child.bar++
+// effect(() => {
+//     console.log('effect~')
+//     console.log(child.bar)
+// })
+// child.bar++
 
