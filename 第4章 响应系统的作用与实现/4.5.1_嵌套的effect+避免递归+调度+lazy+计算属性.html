@@ -55,8 +55,12 @@
         funEffect.deps.length = 0;
       }
 
-      const obj = new Proxy(data, {
+      const objProxy = new Proxy(data, {
         get(target, p, receiver) {
+          // receiver 代表谁在读取属性 类似于this  如何是通过代理对象 objProx.foo 读取属性 这里的 receiver 就是 objProx
+          // 然后 Reflect.get(target, p, receiver);receiver 就是objProx  这样可以防止丢失响应式 因为有时候可以在 对象内部
+          // const data = { foo: 1, bar: 2, get c(){return this.foo} }; 这里的 this为 data 不是通过 objProx 代理访问的 就会 丢失响应式 foo 改变了 读取了c的副作用函数也不会执行 必须
+          // 必须 Reflect.get(target, p, receiver) 让this 强行为 代理对象 objProx 这样才具有响应式
           track(target, p);
           return Reflect.get(...arguments);
         },
@@ -117,11 +121,11 @@
           scheduler(fn) {
             // 这里不用执行fn  effectFn 就是 fn 返回出去了让 用户获取的时候再去执行
             dirty = true;
-            trigger(obj, 'value'); // 当 getter 酣睡里面的 数据 被改变了 会触发执行 这个scheduler 函数 然后我们 trigger 触发 去执行   track(obj, 'value'); 收集的 当 computed 取值的时候 把当前的副作用函数
+            trigger(ob, 'value'); // 当 getter 酣睡里面的 数据 被改变了 会触发执行 这个scheduler 函数 然后我们 trigger 触发 去执行   track(ob, 'value'); 收集的 当 computed 取值的时候 把当前的副作用函数
           },
         });
 
-        const obj = {
+        const ob = {
           get value() {
             if (dirty) {
               value = effectFn();
@@ -129,28 +133,28 @@
             }
             if (activeEffect) {
               // 当 computed 取值的时候 把当前的副作用函数 收集到 全局的桶中
-              track(obj, 'value');
+              track(ob, 'value');
             }
             return value;
           },
         };
-        return obj;
+        return ob;
       }
 
       // effect(() => {
       //   console.log(1, 'log');
       //   effect(() => {
       //     console.log(2, 'log');
-      //     temp2 = obj.bar;
+      //     temp2 = objProx.bar;
       //   });
-      //   temp1 = obj.foo;
-      //   obj.foo++;
+      //   temp1 = objProx.foo;
+      //   objProx.foo++;
       // });
-      // obj.foo = 222;
+      // objProx.foo = 222;
 
       // effect(
       //   () => {
-      //     console.log(obj.foo);
+      //     console.log(objProx.foo);
       //   },
       //   {
       //     scheduler(fn) {
@@ -161,18 +165,18 @@
       //   }
       // );
 
-      // obj.foo++;
-      // obj.foo++;
+      // objProx.foo++;
+      // objProx.foo++;
 
       // console.log('结束了');
 
-      // const computedData = computed(() => obj.foo + obj.bar);
+      // const computedData = computed(() => objProx.foo + objProx.bar);
 
       // effect(() => {
       //   console.log(computedData.value);
       // });
 
-      // obj.foo++;
+      // objProx.foo++;
 
       function traverse(value, seen = new Set()) {
         // 这里的作用就是递归的去读取 value 里面的所有属性 让Effect 收集到每个属性 然后 修改value的时候都可以触发 cb
@@ -226,13 +230,13 @@
         }
       }
 
-      // watch(obj, (oldValue, newValue) => {
+      // watch(objProx, (oldValue, newValue) => {
       //   console.log(oldValue, 'log', newValue, oldValue === newValue); // true
       // });
-      // obj.bar++;
+      // objProx.bar++;
 
       watch(
-        () => obj.bar,
+        () => objProx.bar,
         (oldValue, newValue) => {
           console.log(newValue, 'log');
         },
@@ -241,7 +245,7 @@
         // 个微任务队列中，并等待 DOM 更新结束后再执行，
         { immediate: true, flush: 'post' }
       );
-      obj.bar++;
+      objProx.bar++;
       console.log(111, 'log');
     </script>
   </body>
