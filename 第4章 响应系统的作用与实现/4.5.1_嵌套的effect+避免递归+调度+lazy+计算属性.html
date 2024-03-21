@@ -186,7 +186,7 @@
       }
 
       // source 可以是 getter 可以是一个 响应式对象
-      function watch(source, cb) {
+      function watch(source, cb, options = {}) {
         let getter;
         let newValue, oldValue;
         if (typeof source === 'function') {
@@ -194,16 +194,36 @@
         } else {
           getter = () => traverse(source);
         }
+        let cleanup; // 用来储存用户过期的回调函数
+        function onInvalidate(callBack) {
+          if (callBack) cleanup = callBack;
+        }
+        const scheduler = (fn) => {
+          newValue = fn();
+          if (cleanup) cleanup(); // 在每次执行前先执行  注册的回调函数 因为 首次执行没有注册所有首次执行 scheduler cleanup不会执行
+          // console.log(fn === effectFn, 'asdfasf'); // true
+          cb(oldValue, newValue, onInvalidate);
+          oldValue = newValue;
+        };
         const effectFn = effect(getter, {
           lazy: true,
-          scheduler(fn) {
-            newValue = effectFn();
-            console.log(fn === effectFn, 'asdfasf'); // true
-            cb(oldValue, newValue);
-            oldValue = newValue;
+          scheduler: (fn) => {
+            if (options.flush === 'post') {
+              jobQueue.add(() => {
+                // 通过闭包 传入fn
+                scheduler(fn);
+              });
+              flushJob();
+            } else {
+              scheduler(fn);
+            }
           },
         });
-        oldValue = effectFn();
+        if (options.immediate) {
+          scheduler(effectFn);
+        } else {
+          oldValue = effectFn();
+        }
       }
 
       // watch(obj, (oldValue, newValue) => {
@@ -214,10 +234,15 @@
       watch(
         () => obj.bar,
         (oldValue, newValue) => {
-          console.log(oldValue, 'log', newValue, oldValue === newValue); // 2 3 false
-        }
+          console.log(newValue, 'log');
+        },
+        // immediate 回调函数立即执行一次
+        // flush 控制回调函数的执行时机  post代表调度函数需要将副作用函数放到一
+        // 个微任务队列中，并等待 DOM 更新结束后再执行，
+        { immediate: true, flush: 'post' }
       );
       obj.bar++;
+      console.log(111, 'log');
     </script>
   </body>
 </html>
