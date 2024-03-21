@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <script>
+      const data = { foo: 1, bar: 2 };
+      let temp1, temp2;
+      let activeEffect;
+      const TriggerType = {
+        SET: 'SET',
+        ADD: 'ADD',
+        DELETE: 'DELETE',
+      };
+
+      const activeEffectStack = []; // 副作用函数的栈
+      const bucket = new WeakMap(); // 副作用函数的桶 使用WeakMap
+      const jobQueue = new Set(); // 任务队列 自动会去重 副作用函数
+      let isFlushing = false; // 是否正在刷新队列
+      let p = Promise.resolve(); // 用来创建一个微任务队列把 副作用 函数放在微任务队列里面去
+      function flushJob() {
+        if (isFlushing) return;
+        isFlushing = true;
+        p.then(() => {
+          jobQueue.forEach((job) => job());
+        }).finally(() => {
+          isFlushing = false;
+        });
+      }
+
+      function effect(fn, options = {}) {
+        const funEffect = function () {
+          cleanEffect(funEffect);
+          activeEffect = funEffect; // 这里每次都是最新的 如果嵌套了 就会导致 嵌套的 fn 执行完后  没有恢复 所以这里要保存之前的funEffect
+          activeEffectStack.push(activeEffect);
+          const res = fn();
+          // 执行完之后 恢复 activeEffect
+          // 先把它从 activeEffectStack 移除掉 执行完的 funEffect
+          activeEffectStack.pop();
+          activeEffect = activeEffectStack[activeEffectStack.length - 1];
+          return res;
+        };
+        funEffect.options = options;
+        funEffect.deps = [];
+        if (!options.lazy) {
+          funEffect(); // 执行副作用函数
+        }
+        return funEffect;
+      }
+
+      function cleanEffect(funEffect) {
+        if (!funEffect.deps) return;
+        funEffect.deps.forEach((dep) => {
+          dep.delete(funEffect);
+        });
+        // 最后需要重置 effectFn.deps 数组
+        funEffect.deps.length = 0;
+      }
+
+      // track函数
+      function track(target, key) {
+        if (!activeEffect) return target[key]; // 没有正在执行的副作用函数 直接返回
+        let depsMap = bucket.get(target);
+        if (!depsMap) {
+          // 不存在，则创建一个Map
+          bucket.set(target, (depsMap = new Map()));
+        }
+        let deps = depsMap.get(key); // 根据key得到 depsSet(set类型), 里面存放了该 target-->key 对应的副作用函数
+        if (!deps) {
+          // 不存在，则创建一个Set
+          depsMap.set(key, (deps = new Set()));
+        }
+        activeEffect.deps.push(deps); // 将当前的副作用函数deps添加到 deps 集合中
+
+        deps.add(activeEffect); // 将副作用函数加进去
+      }
+
+      // trigger函数
+      function trigger(target, key, type, newValue) {
+        const depsMap = bucket.get(target); // target Map
+        if (!depsMap) return;
+        const deps = depsMap.get(key); // effectFn Set
+
+        const iterateEffects = depsMap.get(ITERATE_KEY);
+
+        // deps && deps.forEach((fn) => fn()); // 这里不能这样写  虽然 cleanEffect 清除了
+        //  但因为 执行fn的时候 又会重新收集依赖   deps.add(activeEffect); // 将副作用函数加进去 又会重新 add进去  deps 会一直删 一直加 就会无限循环的执行fn
+
+        const effectToRun = new Set();
+
+        // 普通的
+        deps &&
+          deps.forEach((fn) => {
+            if (fn !== activeEffect) {
+              // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+              effectToRun.add(fn);
+            }
+          });
+
+        // for in 循环的
+        if (type === TriggerType.ADD || type === TriggerType.DELETE) {
+          iterateEffects &&
+            iterateEffects.forEach((fn) => {
+              if (fn !== activeEffect) {
+                // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+                effectToRun.add(fn);
+              }
+            });
+        }
+
+        // 数组length长度的 修改长度为add 才会触发 arr.length 的副作用执行 因为如果是set 的 话对 length 不会有影响
+        // 这里针对的只是    effect(() => {
+        //   console.log(arrProxy.length);
+        // }); 这种情况
+        const effectsLength = depsMap.get('length');
+        if (type === TriggerType.ADD && Array.isArray(target)) {
+          effectsLength &&
+            effectsLength.forEach((fn) => {
+              if (fn !== activeEffect) {
+                // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+                effectToRun.add(fn);
+              }
+            });
+        }
+
+        // 修改 了数组长度 减少 会对 被删除的 数组元素有影响 也就是大于 新length的元素会被删除 就需要通知 副作用函数
+        if (key === 'length' && Array.isArray(target)) {
+          // 对于索引大于或等于新的 length 值的元素，
+          // 需要把所有相关联的副作用函数取出并添加到 effectsToRun 中待执行
+          depsMap.forEach((deps, key) => {
+            if (Number(key) >= newValue) {
+              deps.forEach((fn) => {
+                if (fn !== activeEffect) {
+                  // 避免无效递归 因为可能 读取和设置 是同一个副作用函数
+                  effectToRun.add(fn);
+                }
+              });
+            }
+          });
+        }
+
+        effectToRun.forEach((fn) => {
+          if (fn.options.scheduler) {
+            fn.options.scheduler(fn);
+          } else if (fn !== activeEffect) {
+            fn();
+          }
+        });
+      }
+
+      function computed(getter) {
+        let value;
+        let dirty = true;
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler(fn) {
+            // 这里不用执行fn  effectFn 就是 fn 返回出去了让 用户获取的时候再去执行
+            dirty = true;
+            trigger(ob, 'value'); // 当 getter 酣睡里面的 数据 被改变了 会触发执行 这个scheduler 函数 然后我们 trigger 触发 去执行   track(ob, 'value'); 收集的 当 computed 取值的时候 把当前的副作用函数
+          },
+        });
+
+        const ob = {
+          get value() {
+            if (dirty) {
+              value = effectFn();
+              dirty = false;
+            }
+            if (activeEffect) {
+              // 当 computed 取值的时候 把当前的副作用函数 收集到 全局的桶中
+              track(ob, 'value');
+            }
+            return value;
+          },
+        };
+        return ob;
+      }
+
+      function traverse(value, seen = new Set()) {
+        // 这里的作用就是递归的去读取 value 里面的所有属性 让Effect 收集到每个属性 然后 修改value的时候都可以触发 cb
+        // seen 防止 循环引用的
+        if (!value || typeof value !== 'object' || seen.has(value)) return; // 先不考虑数组的情况
+        seen.add(value);
+        for (const k in value) {
+          traverse(value[k], seen);
+        }
+        return value;
+      }
+
+      // source 可以是 getter 可以是一个 响应式对象
+      function watch(source, cb, options = {}) {
+        let getter;
+        let newValue, oldValue;
+        if (typeof source === 'function') {
+          getter = source;
+        } else {
+          getter = () => traverse(source);
+        }
+        let cleanup; // 用来储存用户过期的回调函数
+        function onInvalidate(callBack) {
+          if (callBack) cleanup = callBack;
+        }
+        const scheduler = (fn) => {
+          newValue = fn();
+          if (cleanup) cleanup(); // 在每次执行前先执行  注册的回调函数 因为 首次执行没有注册所有首次执行 scheduler cleanup不会执行
+          // console.log(fn === effectFn, 'asdfasf'); // true
+          cb(oldValue, newValue, onInvalidate);
+          oldValue = newValue;
+        };
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler: (fn) => {
+            if (options.flush === 'post') {
+              jobQueue.add(() => {
+                // 通过闭包 传入fn
+                scheduler(fn);
+              });
+              flushJob();
+            } else {
+              scheduler(fn);
+            }
+          },
+        });
+        if (options.immediate) {
+          scheduler(effectFn);
+        } else {
+          oldValue = effectFn();
+        }
+      }
+
+      const ITERATE_KEY = Symbol('iterate key'); // 用于 for in 循环 没有key 参数  因为for in 对应的所有的key 没有具体的key 所以用这个代替
+
+      function createReactive(obj, isShallow = false, isReadonly = false) {
+        return new Proxy(obj, {
+          get(target, p, receiver) {
+            if (p === 'raw') {
+              // 在这里去拦截 set 里面 receiver.raw 的操作
+              // proxy.raw可以取得他的代理对象target
+              return target;
+            }
+
+            !isReadonly && track(target, p);
+
+            const result = Reflect.get(...arguments);
+            if (isShallow) {
+              // 浅响应式直接返回
+              return result;
+            }
+
+            //proxyData1.foo.bar,  console.log(result, 'log'); 输出{bar:1}
+            if (typeof result === 'object' && result !== null) {
+              // 因为result 此时 没有代理所有将 result 也代理起来
+              // 深层次的响应式
+              //               由上面这段代码可知，当我们读取 obj.foo.bar 时，首先要读
+              // 取 obj.foo 的值。这里我们直接使用 Reflect.get 函数返回
+              // obj.foo 的结果。由于通过 Reflect.get 得到 obj.foo 的结果是
+              // 一个普通对象，即 { bar: 1 }，它并不是一个响应式对象，所以在
+              // 副作用函数中访问 obj.foo.bar 时，是不能建立响应联系的。要解
+              // 决这个问题，我们需要对 Reflect.get 返回的结果做一层包装：
+              // 把这个代理的  对象返回出去，这样，当读取 obj.foo.bar 的时候 是用代理读取的
+              // 深只读
+              return isReadonly ? readonly : reactive(result);
+            }
+            return result;
+          },
+          set(target, p, value, receiver) {
+            // 如果是只读的，则打印警告信息并返回
+            if (isReadonly) {
+              console.warn(`属性 ${key} 是只读的`);
+              return true;
+            }
+
+            let type; // 判断是设置对象还是新增对象
+            if (Array.isArray(target)) {
+              // 如果是大于本身数组的长度了 那就是新增
+              type = Number(p) < target.length ? TriggerType.SET : TriggerType.ADD;
+            } else {
+              type = Object.prototype.hasOwnProperty.call(target)
+                ? TriggerType.SET
+                : TriggerType.ADD;
+            }
+            const oldValue = Reflect.set(...arguments);
+            // 例子1:设置对象上一个 不存在的属性 prototype上的set 也会执行 如果是自身有的 就只会执行自身的 set
+            // 这里 需要解决这种 现象 屏蔽 父对象的 set 执行 解决办法 判断一下  receiver.raw 属性是不是 等于 target 因为
+            // 通过子设置子对象没有的属性触发的 父对象的set的时候 receiver 始终指向的是 最开始操作的代理 也就是 子对象的代理 这种情况下 target是父对象
+            if (receiver.raw === target) {
+              // 这里就代表 是修改操作 否则是 例子1 的操作 因为  receiver.raw 不等于 子target
+              if (
+                oldValue !== value &&
+                (!Number.isNaN(oldValue) || !Number.isNaN(value))
+              ) {
+                // oldValue !== value 值没变就没变触发了
+                // 如果是新增对象的话 就得触发 key 为 ITERATE_KEY 的 deps 因为  触发for in 循环的 副作用函数
+                // 新旧值对比, 且新旧值 不都是 NaN, 才执行更新
+                trigger(target, p, type, value); // 把副作用函数取出并执行
+              }
+            }
+            return oldValue;
+          },
+          has(target, p) {
+            // 拦截 in 操作符, in操作符内部最终调用了对象的[[HasProperty]]内部方法，该内部方法可以被Proxy的has拦截函数拦截
+            track(target, p);
+            return Reflect.has(...arguments);
+          },
+          ownKeys(target) {
+            // 拦截 for in 循环，只有target参数
+            track(target, ITERATE_KEY);
+            return Reflect.ownKeys(...arguments);
+          },
+          deleteProperty(target, p) {
+            // 如果是只读的，则打印警告信息并返回
+            if (isReadonly) {
+              console.warn(`属性 ${key} 是只读的`);
+              return true;
+            }
+            // 拦截delete操作, delete操作也会影响for in 循环，所以传递DELETE参数到trigger函数
+            const hasKey = Object.prototype.hasOwnProperty.call(target, p); // 测试target是否有这个property
+            const res = Reflect.deleteProperty(target, p);
+            if (hasKey && res) {
+              // 删除成功且target有这个key
+              trigger(target, p, 'DELETE');
+            }
+            return res;
+          },
+        });
+      }
+      function reactive(obj) {
+        // 深响应式
+        return createReactive(obj, false);
+      }
+
+      function shallowReactive(obj) {
+        // 浅响应式
+        return createReactive(obj, true);
+      }
+
+      function readonly(obj) {
+        // 深只读
+        return createReactive(obj, false, true /* 只读 */);
+      }
+
+      function shallowReadonly(obj) {
+        // 浅只读
+        return createReactive(obj, true /* shallow */, true);
+      }
+
+      // 修改长度 也会触发 副作用函数
+      let arrProxy = reactive(['foo', 'ccc']);
+      // effect(() => {
+      //   console.log(arrProxy.length);
+      // });
+      // arrProxy[3] = 'bar';
+      // arrProxy.length = 0;
+      // // 修改length 也会触发 副作用函数 因为数组被修改了 里面元素可能就笑死了 比如 arrProxy.length = 0
+      effect(() => {
+        console.log(arrProxy[1]);
+      });
+      arrProxy.length = 0;
+    </script>
+  </body>
+</html>
+
+<!-- 通过索引访问数组元素值：arr[0]。
+访问数组的长度：arr.length。
+把数组作为对象，使用 for...in 循环遍历。
+使用 for...of 迭代遍历数组。
+数组的原型方法，如
+concat/join/every/some/find/findIndex/includes
+等，以及其他所有不改变原数组的原型方法。
+可以看到，对数组的读取操作要比普通对象丰富得多。我们再来
+看看对数组元素或属性的设置操作有哪些。
+通过索引修改数组元素值：arr[1] = 3。
+修改数组长度：arr.length = 0。
+数组的栈方法：push/pop/shift/unshift。
+修改原数组的原型方法：splice/fill/sort 等。 -->
+<!-- 可以看到，规范中明确说明，如果设置的索引值大于数组当前的
+长度，那么要更新数组的 length 属性。所以当通过索引设置元素值
+时，可能会隐式地修改 length 的属性值。因此在触发响应时，也应
+该触发与 length 属性相关联的副作用函数重新执行，如下面的代码
+所示： -->
+
+<!-- 数组length长度的修改 思考 -->
+<!-- 接着将数组的 length 属性修改为 0。我们知道这会隐式地影响数组
+元素，即所有元素都被删除，所以应该触发副作用函数重新执行。然
+而并非所有对 length 属性的修改都会影响数组中的已有元素，拿上
+例来说，如果我们将 length 属性设置为 100，这并不会影响第 0 个
+元素，所以也就不需要触发副作用函数重新执行。这让我们意识到，
+当修改 length 属性值时，只有那些索引值大于或等于新的 length
+属性值的元素才需要触发响应。但无论如何，目前的实现还做不到这
+一点，为了实现目标，我们需要修改 set 拦截函数。在调用 trigger
+函数触发响应时，应该把新的属性值传递过去： -->
