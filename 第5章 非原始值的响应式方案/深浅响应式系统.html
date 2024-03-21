@@ -216,7 +216,8 @@
       // });
 
       const ITERATE_KEY = Symbol('iterate key'); // 用于 for in 循环 没有key 参数  因为for in 对应的所有的key 没有具体的key 所以用这个代替
-      function reactive(obj) {
+
+      function createReactive(obj, isShallow = false, isReadonly = false) {
         return new Proxy(obj, {
           get(target, p, receiver) {
             if (p === 'raw') {
@@ -224,8 +225,14 @@
               // proxy.raw可以取得他的代理对象target
               return target;
             }
-            track(target, p);
+
+            !isReadonly && track(target, p);
+
             const result = Reflect.get(...arguments);
+            if (isShallow) {
+              // 浅响应式直接返回
+              return result;
+            }
             //proxyData1.foo.bar,  console.log(result, 'log'); 输出{bar:1}
             if (typeof result === 'object' && result !== null) {
               // 因为result 此时 没有代理所有将 result 也代理起来
@@ -237,11 +244,18 @@
               // 副作用函数中访问 obj.foo.bar 时，是不能建立响应联系的。要解
               // 决这个问题，我们需要对 Reflect.get 返回的结果做一层包装：
               // 把这个代理的  对象返回出去，这样，当读取 obj.foo.bar 的时候 是用代理读取的
-              return reactive(result);
+              // 深只读
+              return isReadonly ? readonly : reactive(result);
             }
             return result;
           },
           set(target, p, value, receiver) {
+            // 如果是只读的，则打印警告信息并返回
+            if (isReadonly) {
+              console.warn(`属性 ${key} 是只读的`);
+              return true;
+            }
+
             const type = Object.prototype.hasOwnProperty.call(target)
               ? TriggerType.SET
               : TriggerType.ADD; // 判断是设置对象还是新增对象
@@ -275,6 +289,11 @@
             return Reflect.ownKeys(...arguments);
           },
           deleteProperty(target, p) {
+            // 如果是只读的，则打印警告信息并返回
+            if (isReadonly) {
+              console.warn(`属性 ${key} 是只读的`);
+              return true;
+            }
             // 拦截delete操作, delete操作也会影响for in 循环，所以传递DELETE参数到trigger函数
             const hasKey = Object.prototype.hasOwnProperty.call(target, p); // 测试target是否有这个property
             const res = Reflect.deleteProperty(target, p);
@@ -285,6 +304,25 @@
             return res;
           },
         });
+      }
+      function reactive(obj) {
+        // 深响应式
+        return createReactive(obj, false);
+      }
+
+      function shallowReactive(obj) {
+        // 浅响应式
+        return createReactive(obj, true);
+      }
+
+      function readonly(obj) {
+        // 深只读
+        return createReactive(obj, false, true /* 只读 */);
+      }
+
+      function shallowReadonly(obj) {
+        // 浅只读
+        return createReactive(obj, true /* shallow */, true);
       }
 
       // let a = { b: 1, c: 2 };
@@ -321,14 +359,14 @@
       // console.log(c, 'log');
 
       // 深响应式
-      let data1 = { foo: { bar: 1 } };
-      let proxyData1 = reactive(data1);
-      effect(() => {
-        let a = proxyData1.foo;
-        console.log(a.bar, 'log1');
-        // console.log(proxyData1.foo.bar, 'log1');
-      });
-      proxyData1.foo.bar = 3;
+      // let data1 = { foo: { bar: 1 } };
+      // let proxyData1 = reactive(data1);
+      // effect(() => {
+      //   let a = proxyData1.foo;
+      //   console.log(a.bar, 'log1');
+      //   // console.log(proxyData1.foo.bar, 'log1');
+      // });
+      // proxyData1.foo.bar = 3;
     </script>
   </body>
 </html>
