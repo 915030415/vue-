@@ -225,7 +225,19 @@
               return target;
             }
             track(target, p);
-            return Reflect.get(...arguments);
+            const result = Reflect.get(...arguments);
+            if (typeof result === 'object' && result !== null) {
+              // 因为result 此时 没有代理所有将 result 也代理起来
+              // 深层次的响应式
+              //               由上面这段代码可知，当我们读取 obj.foo.bar 时，首先要读
+              // 取 obj.foo 的值。这里我们直接使用 Reflect.get 函数返回
+              // obj.foo 的结果。由于通过 Reflect.get 得到 obj.foo 的结果是
+              // 一个普通对象，即 { bar: 1 }，它并不是一个响应式对象，所以在
+              // 副作用函数中访问 obj.foo.bar 时，是不能建立响应联系的。要解
+              // 决这个问题，我们需要对 Reflect.get 返回的结果做一层包装：
+              reactive(result);
+            }
+            return result;
           },
           set(target, p, value, receiver) {
             const type = Object.prototype.hasOwnProperty.call(target)
@@ -294,17 +306,25 @@
       // proxyA.d = 1;
 
       // 测试 继承
-      let a = { s: 1 };
-      let b = { c: 1 };
-      let c = reactive(a);
-      let d = reactive(b);
-      Object.setPrototypeOf(c, d);
-      effect(() => {
-        console.log('c上设置c没有的属性看会执行几次， ', 'log', c.a);
-        // 开始默认执行了一次 后面由c自己set触发执行了一次 d的set虽然触发了但没有 trigger；
-      });
-      c.a = 2;
+      // let a = { s: 1 };
+      // let b = { c: 1 };
+      // let c = reactive(a);
+      // let d = reactive(b);
+      // Object.setPrototypeOf(c, d);
+      // effect(() => {
+      //   console.log('c上设置c没有的属性看会执行几次， ', 'log', c.a);
+      //   // 开始默认执行了一次 后面由c自己set触发执行了一次 d的set虽然触发了但没有 trigger；
+      // });
+      // c.a = 2;
       // console.log(c, 'log');
+
+      // 深响应式
+      let data1 = { foo: { bar: 1 } };
+      let proxyData1 = reactive(data1);
+      effect(() => {
+        console.log(proxyData1.foo.bar, 'log1');
+      });
+      proxyData1.foo.bar = 2;
     </script>
   </body>
 </html>
