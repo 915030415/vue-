@@ -234,6 +234,25 @@
       const ITERATE_KEY = Symbol('iterate key'); // 用于 for in 循环 没有key 参数  因为for in 对应的所有的key 没有具体的key 所以用这个代替
       // 定义一个 Map 实例，存储原始对象到代理对象的映射 解决例3
       const reactiveMap = new Map();
+
+      // 重写数组函数
+      const arrayInstrumentations = {};
+
+      // 解决例3
+      ['includes', 'indexOf', 'lastIndexOf'].forEach((way) => {
+        const originWay = Array.prototype[way];
+        arrayInstrumentations[way] = function (...args) {
+          // 重写数组方法  这里的this 指像代理数 因为没有被劫持过的数组数据 方法没有被重写
+          let res = originWay.apply(this, args); // 拿到结果
+          if (!res) {
+            // 结果没找到 则 用原数组对象再去 执行一次
+            res = originWay.apply(this.raw, args);
+          }
+          return res;
+        };
+      });
+
+      // 劫持
       function createReactive(obj, isShallow = false, isReadonly = false) {
         return new Proxy(obj, {
           get(target, p, receiver) {
@@ -250,7 +269,14 @@
               track(target, p);
             }
 
-            const result = Reflect.get(...arguments);
+            let result;
+            if (Array.isArray(target) && arrayInstrumentations.hasOwnProperty(p)) {
+              // 获取的就是重写的 数组方法了
+              result = Reflect.get(arrayInstrumentations, p, receiver);
+            } else {
+              result = Reflect.get(...arguments);
+            }
+
             if (isShallow) {
               // 浅响应式直接返回
               return result;
@@ -398,9 +424,16 @@
       // 但问题 是  arr[0] 得到的 result = reactive(obj)  和 arr.includes 得到的result 是两个不同的代理对象
       // 通过 shallowReactive 浅代理 就是 true 因为 只代理了 数组的第一层 也就是 arr[0] 没有代理
       // 解决办法 全局定义定义一个 映射 result 存在就直接用 否则创建
-      const obj = {};
-      const arr = reactive([obj]);
-      console.log(arr.includes(arr[0])); // false
+      // const obj = {};
+      // const arr = reactive([obj]);
+      // console.log(arr.includes(arr[0])); // false
+
+      // 例4 代理对象 ！= 原始对象
+      // 解决 重写 数组方法
+      // const obj = {};
+      // const arr = reactive([obj]);
+
+      // console.log(arr.includes(obj));
     </script>
   </body>
 </html>
