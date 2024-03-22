@@ -62,7 +62,8 @@
 
       // track函数
       function track(target, key) {
-        if (!activeEffect) return target[key]; // 没有正在执行的副作用函数 直接返回
+        if (!shouldTrack) return; // 不允许 劫持
+        if (!activeEffect) return; // 没有正在执行的副作用函数 直接返回
         let depsMap = bucket.get(target);
         if (!depsMap) {
           // 不存在，则创建一个Map
@@ -252,6 +253,19 @@
         };
       });
 
+      let shouldTrack = true; // 全局开关 是否允许追踪
+
+      // 解决4
+      ['push', 'pop', 'shift', 'unshift', 'splice'].forEach((way) => {
+        const originWay = Array.prototype[way];
+        arrayInstrumentations[way] = function (...args) {
+          shouldTrack = false; // 原始方法执行前不允许劫持
+          const res = originWay.apply(this, args);
+          shouldTrack = true;
+          return res;
+        };
+      });
+
       // 劫持
       function createReactive(obj, isShallow = false, isReadonly = false) {
         return new Proxy(obj, {
@@ -434,6 +448,16 @@
       // const arr = reactive([obj]);
 
       // console.log(arr.includes(obj));
+
+      // 例子4 栈溢出
+      // 解决 定义一个全部开关变量  让push 内部 访问length 属性时 不进行 劫持
+      let arrProxy1 = reactive([1, 2, 3]);
+      effect(() => {
+        arrProxy1.push(1);
+      });
+      effect(() => {
+        arrProxy1.push(4);
+      });
     </script>
   </body>
 </html>
@@ -467,3 +491,36 @@ concat/join/every/some/find/findIndex/includes
 属性值的元素才需要触发响应。但无论如何，目前的实现还做不到这
 一点，为了实现目标，我们需要修改 set 拦截函数。在调用 trigger
 函数触发响应时，应该把新的属性值传递过去： -->
+
+<!-- push方法的问题 -->
+<!-- // 第一个副作用函数 -->
+<!-- 03 effect(() => {
+04 arr.push(1)
+05 })
+06
+07 // 第二个副作用函数
+08 effect(() => {
+09 arr.push(1)
+10 }) -->
+<!-- 第一个副作用函数执行。在该函数内，调用 arr.push 方法向数
+组中添加了一个元素。我们知道，调用数组的 push 方法会间接
+读取数组的 length 属性。所以，当第一个副作用函数执行完毕
+后，会与 length 属性建立响应联系。
+接着，第二个副作用函数执行。同样，它也会与 length 属性建
+立响应联系。但不要忘记，调用 arr.push 方法不仅会间接读取
+数组的 length 属性，还会间接设置 length 属性的值。
+第二个函数内的 arr.push 方法的调用设置了数组的 length 属
+性值。于是，响应系统尝试把与 length 属性相关联的副作用函
+数全部取出并执行，其中就包括第一个副作用函数。问题就出在
+这里，可以发现，第二个副作用函数还未执行完毕，就要再次执
+行第一个副作用函数了。
+第一个副作用函数再次执行。同样，这会间接设置数组的 length
+属性。于是，响应系统又要尝试把所有与 length 属性相关联的
+副作用函数取出并执行，其中就包含第二个副作用函数。
+如此循环往复，最终导致调用栈溢出。
+问题的原因是 push 方法的调用会间接读取 length 属性。所
+以，只要我们“屏蔽”对 length 属性的读取，从而避免在它与副作用
+函数之间建立响应联系，问题就迎刃而解了。这个思路是正确的，因
+为数组的 push 方法在语义上是修改操作，而非读取操作，所以避免
+建立响应联系并不会产生其他副作用。有了解决思路后，我们尝试实
+现它，这需要重写数组的 push 方法，如下面的代码所示： -->
