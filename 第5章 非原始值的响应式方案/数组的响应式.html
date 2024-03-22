@@ -100,7 +100,7 @@
             }
           });
 
-        // for in 循环的
+        // for in 循环的 就需要去触发 因为 add 或 删除 会对for in 循环的次数产生影响
         if (type === TriggerType.ADD || type === TriggerType.DELETE) {
           iterateEffects &&
             iterateEffects.forEach((fn) => {
@@ -193,7 +193,7 @@
       // source 可以是 getter 可以是一个 响应式对象
       function watch(source, cb, options = {}) {
         let getter;
-        let newValue, oldValue;
+        let newValue, oldValue; // 是getter执行后返回的结果
         if (typeof source === 'function') {
           getter = source;
         } else {
@@ -232,7 +232,8 @@
       }
 
       const ITERATE_KEY = Symbol('iterate key'); // 用于 for in 循环 没有key 参数  因为for in 对应的所有的key 没有具体的key 所以用这个代替
-
+      // 定义一个 Map 实例，存储原始对象到代理对象的映射 解决例3
+      const reactiveMap = new Map();
       function createReactive(obj, isShallow = false, isReadonly = false) {
         return new Proxy(obj, {
           get(target, p, receiver) {
@@ -242,14 +243,18 @@
               return target;
             }
 
-            !isReadonly && track(target, p);
+            // typeof key !== 'symbol'
+            if (!isReadonly && typeof p !== 'symbol') {
+              // 不是 只读的
+              // 为了避免发生意外的错误，以及性能上的考 虑，我们不应该在副作用函数与 Symbol.iterator 这类 symbol 值之间建立响应联系
+              track(target, p);
+            }
 
             const result = Reflect.get(...arguments);
             if (isShallow) {
               // 浅响应式直接返回
               return result;
             }
-
             //proxyData1.foo.bar,  console.log(result, 'log'); 输出{bar:1}
             if (typeof result === 'object' && result !== null) {
               // 因为result 此时 没有代理所有将 result 也代理起来
@@ -262,7 +267,9 @@
               // 决这个问题，我们需要对 Reflect.get 返回的结果做一层包装：
               // 把这个代理的  对象返回出去，这样，当读取 obj.foo.bar 的时候 是用代理读取的
               // 深只读
-              return isReadonly ? readonly : reactive(result);
+              // 这里表明vue3的代理是懒代理的 深层次的代理只有反访问的时候才会触发代理
+
+              return isReadonly ? readonly(result) : reactive(result);
             }
             return result;
           },
@@ -278,7 +285,8 @@
               // 如果是大于本身数组的长度了 那就是新增
               type = Number(p) < target.length ? TriggerType.SET : TriggerType.ADD;
             } else {
-              type = Object.prototype.hasOwnProperty.call(target)
+              // 判断target是否有这个属性
+              type = Object.prototype.hasOwnProperty.call(target, key)
                 ? TriggerType.SET
                 : TriggerType.ADD;
             }
@@ -307,7 +315,9 @@
           },
           ownKeys(target) {
             // 拦截 for in 循环，只有target参数
-            track(target, ITERATE_KEY);
+            // 对于数组来说 修改长度 都对应到 length 属性上 for in 循环 也和 length有关
+            // for(key in arr){log(key)} 像这种情况 不过一般不要用 for in 去操作数组
+            track(target, Array.isArray(target) ? 'length' : ITERATE_KEY);
             return Reflect.ownKeys(...arguments);
           },
           deleteProperty(target, p) {
@@ -329,7 +339,14 @@
       }
       function reactive(obj) {
         // 深响应式
-        return createReactive(obj, false);
+        const proxy = createReactive(obj, false);
+        //  优先通过原始对象 obj 寻找之前创建的代理对象，如果找到了，直接返回已有 的代理对象;
+        // 解决例3
+        const existionProxy = reactiveMap.get(obj);
+        if (existionProxy) return existionProxy;
+
+        reactiveMap.set(obj, proxy);
+        return proxy;
       }
 
       function shallowReactive(obj) {
@@ -348,17 +365,42 @@
       }
 
       // 修改长度 也会触发 副作用函数
-      let arrProxy = reactive(['foo', 'ccc']);
+      let data1 = ['foo', 'ccc'];
+      let arrProxy = reactive(data1);
       // effect(() => {
       //   console.log(arrProxy.length);
       // });
       // arrProxy[3] = 'bar';
       // arrProxy.length = 0;
       // // 修改length 也会触发 副作用函数 因为数组被修改了 里面元素可能就笑死了 比如 arrProxy.length = 0
-      effect(() => {
-        console.log(arrProxy[1]);
-      });
-      arrProxy.length = 0;
+      // effect(() => {
+      //   console.log(arrProxy[1]);
+      // });
+      // arrProxy.length = 0;
+
+      // for in 操作数组
+      // effect(() => {
+      //   for (const key in arrProxy) {
+      //     console.log(key);
+      //   }
+      // });
+      // arrProxy[3] = 'bar';
+      // console.log(arrProxy, 'log', data1);
+
+      // for of 数组的情况  不需要 额外去 设置 因为 内部用的是迭代器 通过 next 函数 读取了length 属性去 操作的 所以 劫持l 数组的 length 属性就可以了
+      //  包括 includes 等这些方法 内部都使用了 数组的基本操作 基本语以 所以可以 自动 建立依赖
+      // effect(() => {
+      //   console.log(arrProxy.includes('foo'), 'log');
+      // });
+      // arrProxy[3] = 'bar';
+
+      // 例子3  解决 这个问题  没解决之前 是false 因为get代理的时候 去深代理了 arr[0]; 返回的是 代理后的 对象 也就是 result = reactive(obj) arr.includes 内部也是这样的
+      // 但问题 是  arr[0] 得到的 result = reactive(obj)  和 arr.includes 得到的result 是两个不同的代理对象
+      // 通过 shallowReactive 浅代理 就是 true 因为 只代理了 数组的第一层 也就是 arr[0] 没有代理
+      // 解决办法 全局定义定义一个 映射 result 存在就直接用 否则创建
+      const obj = {};
+      const arr = reactive([obj]);
+      console.log(arr.includes(arr[0])); // false
     </script>
   </body>
 </html>
