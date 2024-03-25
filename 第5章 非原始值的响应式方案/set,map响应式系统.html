@@ -3,6 +3,7 @@
   // 存储副作用函数的桶
   const bucket = new WeakMap();
   const ITERATE_KEY = Symbol();
+  const MAP_KEY_ITERATE_KEY = Symbol();
 
   const reactiveMap = new Map();
 
@@ -64,6 +65,26 @@
       // 如果操作类型是 SET，并且目标对象是 Map 类型的数据，
       // 也应该触发那些与 ITERATE_KEY 相关联的副作用函数重新执行
       const iterateEffects = depsMap.get(ITERATE_KEY);
+      iterateEffects &&
+        iterateEffects.forEach((effectFn) => {
+          if (effectFn !== activeEffect) {
+            effectsToRun.add(effectFn);
+          }
+        });
+    }
+
+    // 单独针对  例子12 这种的
+    // for (const key of p.keys()) {
+    //   console.log(key);
+    // }
+    if (
+      type === 'ADD' ||
+      type === 'DELETE' ||
+      (type === 'SET' && Object.prototype.toString.call(target) === '[object Map]')
+    ) {
+      // 如果操作类型是 SET，并且目标对象是 Map 类型的数据，
+      // 也应该触发那些与 MAP_KEY_ITERATE_KEY 相关联的副作用函数重新执行
+      const iterateEffects = depsMap.get(MAP_KEY_ITERATE_KEY);
       iterateEffects &&
         iterateEffects.forEach((effectFn) => {
           if (effectFn !== activeEffect) {
@@ -213,7 +234,91 @@
         callback.call(thisArg, wrap(value), wrap(key), this);
       });
     },
+
+    [Symbol.iterator]: iterationMethod,
+    entries: iterationMethod,
+    values: valuesIterationMethod,
+    keys: keysIterationMethod,
   };
+
+  // p.entries 与 p[Symbol.iterator] 等价
+  function iterationMethod() {
+    // 定义 代理对象的迭代器方法
+    const target = this.raw;
+    const itr = target[Symbol.iterator]();
+    console.log(itr, 'log');
+    const wrap = (val) => (typeof val === 'object' && val !== null ? reactive(val) : val); // 如果是对象  则迭代的时候 将 value进行深度代理
+    track(target, ITERATE_KEY); // 进行响应式追踪
+    // 返回自定义的迭代器
+    // 可迭代协议指的是一个对象实现了 Symbol.iterator 方法  如果一个对象具有知名符号属性```Symbol.iterator```，并且属性值是一个迭代器创建函数，则该对象是可迭代的（iterable）
+    // 迭代器协议指的是一个对象实现了 next 方法
+    // 但一个对象可以同时 实现可迭代协议和迭代器协议，
+    return {
+      // 迭代器协议
+      next() {
+        // value 的值为 [key,value]  因为有map key可以为 对象等
+        const { value, done } = itr.next(); // 获取原始的 value 和done
+        return {
+          // 如果 value 不是 undefined，则对其进行包裹
+          value: value ? [wrap(value[0]), wrap(value[1])] : value,
+          done,
+        };
+      },
+      // 可迭代协议 解决 例子10   // 因为 for of 循环 的对象 必须满足可迭代协议
+      [Symbol.iterator]() {
+        return this;
+      },
+    };
+  }
+
+  // 例子11
+  function valuesIterationMethod() {
+    const target = this.raw;
+    const itr = target.values();
+    const wrap = (val) => (typeof val === 'object' && val !== null ? reactive(val) : val); // 如果是对象  则迭代的时候 将 value进行深度代理
+    track(target, ITERATE_KEY); // 进行响应式追踪
+    return {
+      next() {
+        const { value, done } = itr.next();
+        return {
+          value: wrap(value),
+          done,
+        };
+      },
+      [Symbol.iterator]() {
+        return this;
+      },
+    };
+  }
+
+  // 例子12
+  function keysIterationMethod() {
+    // 获取原始数据对象 target
+    const target = this.raw;
+    // 获取到原始迭代器方法
+    const itr = target.keys();
+
+    const wrap = (val) => (typeof val === 'object' ? reactive(val) : val);
+    // track(target, ITERATE_KEY);
+
+    // 解决例子12
+    // 调用 track 函数追踪依赖，在副作用函数与 MAP_KEY_ITERATE_KEY 之间建立响应联系
+    track(target, MAP_KEY_ITERATE_KEY);
+
+    // 将其返回
+    return {
+      next() {
+        const { value, done } = itr.next();
+        return {
+          value: wrap(value),
+          done,
+        };
+      },
+      [Symbol.iterator]() {
+        return this;
+      },
+    };
+  }
 
   function createReactive(obj, isShallow = false, isReadonly = false) {
     return new Proxy(obj, {
@@ -315,14 +420,92 @@
   // p.get(key).delete(1);
 
   // 例子8
-  const p = reactive(new Map([['key', 1]]));
+  // const p = reactive(new Map([['key', 1]]));
+
+  // effect(() => {
+  //   p.forEach(function (value, key) {
+  //     // forEach 循环不仅关心集合的键，还关心集合的值
+  //     console.log(value); // 1
+  //   });
+  // });
+
+  // p.set('key', 2); // 即使操作类型是 SET，也应该触发响应
+
+  // 例子9
+  // const p = reactive(
+  //   new Map([
+  //     ['key1', 'value1'],
+  //     ['key2', 'value2'],
+  //   ])
+  // );
+
+  // effect(() => {
+  //   // 如果代理对象上没有迭代器 就会报错
+  //   // TypeError: p is not iterable
+  //   for (const [key, value] of p) {
+  //     console.log(key, value);
+  //   }
+  // });
+
+  // p.set('key3', 'value3');
+
+  //  p.entries 与 p[Symbol.iterator] 等价
+  // 例子10
+  // const p = reactive(
+  //   new Map([
+  //     ['key1', 'value1'],
+  //     ['key2', 'value2'],
+  //   ])
+  // );
+
+  // effect(() => {
+  //   // 如果代理对象上没有迭代器 就会报错
+  //   // TypeError: p is not iterable  意思是 p.entries(）返回的值不是一个 可迭代协议
+  //   // 因为 for of 循环 的对象 必须满足可迭代协议
+  //   for (const [key, value] of p.entries()) {
+  //     console.log(key, value);
+  //   }
+  // });
+
+  // p.set('key3', 'value3');
+
+  // 例子11
+  //   values 方法的实现与 entries 方法类似，不同的是，当使用
+  // for...of 迭代 values 时，得到的仅仅是 Map 数据的值，而非键值
+  // 对：
+  // const p = reactive(
+  //   new Map([
+  //     ['key1', 'value1'],
+  //     ['key2', 'value2'],
+  //   ])
+  // );
+
+  // effect(() => {
+  //   // 如果代理对象上没有迭代器 就会报错
+  //   // TypeError: p is not iterable  意思是 p.entries(）返回的值不是一个 可迭代协议
+  //   // 因为 for of 循环 的对象 必须满足可迭代协议
+  //   for (const value of p.values()) {
+  //     console.log(value);
+  //   }
+  // });
+
+  // p.set('key3', 'value3');
+
+  // 例子12
+  const p = reactive(
+    new Map([
+      ['key1', 'value1'],
+      ['key2', 'value2'],
+    ])
+  );
 
   effect(() => {
-    p.forEach(function (value, key) {
-      // forEach 循环不仅关心集合的键，还关心集合的值
-      console.log(value); // 1
-    });
+    for (const key of p.keys()) {
+      console.log(key);
+    }
   });
 
-  p.set('key', 2); // 即使操作类型是 SET，也应该触发响应
+  // 如果只改动 key 父亲作用 里面只 遍历了 keys 就没必要执行
+  // p.set('key2', 'value3'); // 不能够触发响应
+  p.set('key3', 'value3'); // 能够触发响应
 </script>
