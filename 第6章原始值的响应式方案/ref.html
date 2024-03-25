@@ -404,6 +404,18 @@
         return createReactive(obj, true /* shallow */, true);
       }
 
+      // 例子5
+      function ref(val) {
+        const wrapper = {
+          value: val,
+        };
+        // 使用 Object.defineProperty 在 wrapper 对象上定义一个不可枚举的属性 __v_isRef，并且值为 true
+        Object.defineProperty(wrapper, '__v_isRef', {
+          value: true,
+        });
+        return shallowReactive(wrapper);
+      }
+
       // 修改长度 也会触发 副作用函数
       let data1 = ['foo', 'ccc'];
       let arrProxy = reactive(data1);
@@ -451,13 +463,20 @@
 
       // 例子4 栈溢出
       // 解决 定义一个全部开关变量  让push 内部 访问length 属性时 不进行 劫持
-      let arrProxy1 = reactive([1, 2, 3]);
+      // let arrProxy1 = reactive([1, 2, 3]);
+      // effect(() => {
+      //   arrProxy1.push(1);
+      // });
+      // effect(() => {
+      //   arrProxy1.push(4);
+      // });
+
+      // 例子5
+      let a = ref(1);
       effect(() => {
-        arrProxy1.push(1);
+        console.log(a.value);
       });
-      effect(() => {
-        arrProxy1.push(4);
-      });
+      a.value = 2;
     </script>
   </body>
 </html>
