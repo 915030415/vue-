@@ -56,7 +56,13 @@
         }
       });
 
-    if (type === 'ADD' || type === 'DELETE') {
+    if (
+      type === 'ADD' ||
+      type === 'DELETE' ||
+      (type === 'SET' && Object.prototype.toString.call(target) === '[object Map]')
+    ) {
+      // 如果操作类型是 SET，并且目标对象是 Map 类型的数据，
+      // 也应该触发那些与 ITERATE_KEY 相关联的副作用函数重新执行
       const iterateEffects = depsMap.get(ITERATE_KEY);
       iterateEffects &&
         iterateEffects.forEach((effectFn) => {
@@ -185,16 +191,27 @@
     delete(key) {
       // this 指向的是 receiver 也代理对象
       const target = this.raw;
+      const hadKey = target.has(key); // 必须 要先执行 不然 hadKey 永远为false
       const res = target.delete(key);
       // 先判断值是否已经存在
-      const hadKey = target.has(key);
-
       // 触发 副作用函数   比如  console.log(setProxy.size); 这种
       if (hadKey) {
         // 不存在 才触发
         trigger(target, key, 'DELETE');
       }
       return res;
+    },
+    forEach(callback, thisArg) {
+      const target = this.raw;
+      // 与 ITERATE_KEY 建立响应联系
+      track(target, ITERATE_KEY);
+      // target.forEach(callback);
+      // 解决例子7
+      const wrap = (value) => (typeof value === 'object' ? reactive(value) : value);
+      target.forEach((value, key) => {
+        // 把 value 变成响应式数据 这样当 内部数据改了 forEach 也会被触发
+        callback.call(thisArg, wrap(value), wrap(key), this);
+      });
     },
   };
 
@@ -255,19 +272,57 @@
   // 户既可以操作原始数据，又能够操作响应式数据，这样一来代码就乱
   // 套了。
   // 即：原始数据里面的不应该出现响应式数据
-  const m = new Map();
-  // p1 是 m 的代理对象
-  const p1 = reactive(m);
-  // p2 是另外一个代理对象
-  const p2 = reactive(new Map());
-  // 为 p1 设置一个键值对，值是代理对象 p2
-  p1.set('p2', p2);
+  // const m = new Map();
+  // // p1 是 m 的代理对象
+  // const p1 = reactive(m);
+  // // p2 是另外一个代理对象
+  // const p2 = reactive(new Map());
+  // // 为 p1 设置一个键值对，值是代理对象 p2
+  // p1.set('p2', p2);
+
+  // effect(() => {
+  //   // 注意，这里我们通过原始数据 m 访问 p2
+  //   console.log(m.get('p2').size);
+  // });
+
+  // // 注意，这里我们通过原始数据 m 为 p2 设置一个键值对 foo --> 1
+  // m.get('p2').set('foo', 1);
+
+  // // 例子6
+  // const p = reactive(new Map([[{ key: 1 }, { value: 1 }]]));
+
+  // effect(() => {
+  //   p.forEach(function (value, key) {
+  //     console.log(value); // { value: 1 }
+  //     console.log(key); // { key: 1 }
+  //   });
+  // });
+
+  // // 能够触发响应
+  // p.set({ key: 2 }, { value: 2 });
+
+  // 例子7
+  // const key = { key: 1 };
+  // const value = new Set([1, 2, 3]);
+  // const p = reactive(new Map([[key, value]]));
+
+  // effect(() => {
+  //   p.forEach(function (value, key) {
+  //     console.log(value.size); // 3
+  //   });
+  // });
+
+  // p.get(key).delete(1);
+
+  // 例子8
+  const p = reactive(new Map([['key', 1]]));
 
   effect(() => {
-    // 注意，这里我们通过原始数据 m 访问 p2
-    console.log(m.get('p2').size);
+    p.forEach(function (value, key) {
+      // forEach 循环不仅关心集合的键，还关心集合的值
+      console.log(value); // 1
+    });
   });
 
-  // 注意，这里我们通过原始数据 m 为 p2 设置一个键值对 foo --> 1
-  m.get('p2').set('foo', 1);
+  p.set('key', 2); // 即使操作类型是 SET，也应该触发响应
 </script>
