@@ -9,36 +9,95 @@
     <div id="app"></div>
     <script src="https://unpkg.com/@vue/reactivity@3.0.5/dist/reactivity.global.js"></script>
     <script>
+      // \b(0[0-9]|[1-4][0-9])\b
+      function shouldSetAsProps(el, key, value) {
+        // <input form="form1" /> 解决类似这种
+        // 特殊处理
+        if (key === 'form' && el.tagName === 'INPUT') return false;
+        // 兜底
+        return key in el; // 用 in 操作符判断 key 是否存在对应的 DOM Properties
+      }
       function createRenderer(options) {
-        const { createElement, insert, setElementText } = options;
+        const { createElement, insert, setElementText, patchProps } = options;
         function mountElement(vnode, container) {
           const el = createElement(vnode.type);
+          vnode.el = el; //  dom 和 vnode 直接建立联系
+
           if (typeof vnode.children === 'string') {
             setElementText(el, vnode.children);
+          } else if (Array.isArray(vnode.children)) {
+            // 如果 children 是数组，则遍历每一个子节点，并调用 patch 函数挂载它们;
+            vnode.children.forEach((child) => {
+              patch(null, child, el);
+            });
+          }
+          if (vnode.props) {
+            for (const key in vnode.props) {
+              // 调用 patchProps 函数即可
+              patchProps(el, key, null, vnode.props[key]);
+            }
           }
           insert(el, container);
         }
 
+        // 打补丁
+        // 一： n1 存在 但类型不同 先卸载 旧节点 n1 设置为null 再走初次渲染步骤
+        // 二： 根据不vnode 不同类型 进行不同操作
+        // 二：1 n1 不存走 走 初次渲染步骤
+        // 2 n1 不存在 走 更新操作
         function patch(n1, n2, container) {
-          if (!n1) {
-            //全量补丁
-            mountElement(n2, container);
-          } else {
-            //
+          if (n1 && n1.type !== n2.type) {
+            unmount(n1);
+            n1 = null;
+          }
+          // 代码运行到这里，证明 n1 和 n2 所描述的内容相同
+          const { type } = n2;
+          // 如果 n2.type 的值是字符串类型，则它描述的是普通标签元素
+          if (typeof type === 'string') {
+            if (!n1) {
+              mountElement(n2, container);
+            } else {
+              // patchElement(n1, n2);
+            }
+          } else if (typeof type === 'object') {
+            // 如果 n2.type 的值的类型是对象，则它描述的是组件
+          } else if (type === 'xxx') {
+            // 处理其他类型的 vnode
+          }
+        }
+
+        function unmount(vnode) {
+          //           在 unmount 函数内，我们有机会调用绑定在 DOM 元素上的指令
+          // 钩子函数，例如 beforeUnmount、unmounted 等。
+          // 当 unmount 函数执行时，我们有机会检测虚拟节点 vnode 的类
+          // 型。如果该虚拟节点描述的是组件，则我们有机会调用组件相关
+          // 的生命周期函数。
+          const parent = vnode.el.parentNode;
+          if (parent) {
+            parent.removeChild(vnode.el);
           }
         }
         function render(vnode, container) {
           if (vnode) {
             // 新 vnode 存在，将其与旧 vnode 一起传递给 patch 函数进行打补丁
             patch(container._vnode, vnode, container);
-          }
-          {
+          } else {
             if (container._vnode) {
               // 旧 vnode 存在，且新 vnode 不存在，说明是卸载(unmount)操作
               // 只需要将 container 内的 DOM 清空即可
-              container.innerHTML = '';
+              // 容器的内容可能是由某个或多个组件渲染的，当卸载操作发生
+              // 时，应该正确地调用这些组件的 beforeUnmount、unmounted
+              // 等生命周期函数。
+              // 即使内容不是由组件渲染的，有的元素存在自定义指令，我们应
+              // 该在卸载操作发生时正确执行对应的指令钩子函数。
+              // 使用 innerHTML 清空容器元素内容的另一个缺陷是，它不会移
+              // 除绑定在 DOM 元素上的事件处理函数。
+              // container.innerHTML = ''; 不能这样做
+              // 根据 vnode 获取要卸载的真实 DOM 元素
+              unmount(container._vnode);
             }
           }
+          container._vnode = vnode;
         }
 
         return {
@@ -47,6 +106,9 @@
       }
 
       const renderer = createRenderer({
+        //         从上述分析来看，HTML Attributes 与 DOM Properties 之间的关系
+        // 很复杂，但其实我们只需要记住一个核心原则即可：HTML Attributes
+        // 的作用是设置与之对应的 DOM Pr operties 的初始值。
         createElement(tag) {
           return document.createElement(tag);
         },
@@ -55,6 +117,55 @@
         },
         insert(el, parent, anchor = null) {
           parent.insertBefore(el, anchor);
+        },
+        // 将属性设置相关操作封装到 patchProps 函数中，并作为渲染器选项传递
+        // 可以约定，在 vnode.props 对 象中，凡是以字符串 on 开头的属性都视作事件
+        patchProps(el, key, prevValue, nextValue) {
+          // 匹配以 on 开头的属性，视其为事件
+          if (/^on/.test(key)) {
+            // 根据属性名称得到对应的事件名称，例如 onClick ---> click
+            // 获取为该元素伪造的事件处理函数 invoker
+            //             我们可以绑定一个伪造的事件处理
+            // 函数 invoker，然后把真正的事件处理函数设置为 invoker.value
+            // 属性的值。这样当更新事件的时候，我们将不再需要调用
+            // removeEventListener 函数来移除上一次绑定的事件，只需要更新
+            // invoker.value 的值即可，  这样可以提升性能 不用每次重新 removeEventListener
+            // 一个 元素可以绑定 多个事件  所以 invokers 为 对象
+            // 一个事件可以绑定多个处理酣睡 所以 nextValue 可以为数组
+            const invokers = el._vei || (el._vei = {});
+            let invoker = invokers[key];
+            const name = key.slice(2).toLowerCase();
+            if (nextValue) {
+              if (!invoker) {
+                invoker = el._vei[key] = (e) => {
+                  // 如果 invoker.value 是数组，则遍历它并逐个调用事件处理函数
+                  if (Array.isArray(invoker.value)) {
+                    invoker.value.forEach((fn) => fn(e));
+                  } else {
+                    // 否则直接作为函数调用
+                    invoker.value(e);
+                  }
+                };
+                invoker.value = nextValue;
+                el.addEventListener(name, invoker);
+              } else {
+                invoker.value = nextValue;
+              }
+            } else if (invoker) {
+              el.removeEventListener(name, invoker);
+            }
+          } else if (key === 'class') {
+            el.className = nextValue || '';
+          } else if (shouldSetAsProps(el, key, nextValue)) {
+            const type = typeof el[key];
+            if (type === 'boolean' && nextValue === '') {
+              el[key] = true;
+            } else {
+              el[key] = nextValue;
+            }
+          } else {
+            el.setAttribute(key, nextValue);
+          }
         },
       });
 
@@ -68,7 +179,38 @@
         children: '我是文本节点',
       };
 
-      renderer.render(text, document.querySelector('#app'));
+      const textArr = {
+        type: 'h1',
+        props: {
+          class: '1',
+          id: '2',
+          onclick: [
+            () => {
+              console.log(1);
+            },
+            () => {
+              console.log(2);
+            },
+          ],
+        },
+        children: [
+          {
+            type: 'span',
+            children: '1',
+            props: {
+              onclick: () => {
+                console.log(3, 'log');
+              },
+            },
+          },
+          {
+            type: 'span',
+            children: '2',
+          },
+        ],
+      };
+
+      renderer.render(textArr, document.querySelector('#app'));
     </script>
   </body>
 </html>
