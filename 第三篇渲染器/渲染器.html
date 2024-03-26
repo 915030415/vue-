@@ -139,6 +139,9 @@
               if (!invoker) {
                 invoker = el._vei[key] = (e) => {
                   // 如果 invoker.value 是数组，则遍历它并逐个调用事件处理函数
+                  // e.timeStamp 是事件发生的时间
+                  // 如果事件发生的时间早于事件处理函数绑定的时间，则不执行事件处 理函数;
+                  if (e.timeStamp < invoker.attached) return; // 解决例子1
                   if (Array.isArray(invoker.value)) {
                     invoker.value.forEach((fn) => fn(e));
                   } else {
@@ -147,6 +150,9 @@
                   }
                 };
                 invoker.value = nextValue;
+
+                // 添加 invoker.attached 属性，存储事件处理函数被绑定的时间
+                invoker.attached = performance.now(); // 解决例子1
                 el.addEventListener(name, invoker);
               } else {
                 invoker.value = nextValue;
@@ -169,48 +175,83 @@
         },
       });
 
-      const vnode = {
-        type: 'div',
-        children: 'text',
-      };
+      // const vnode = {
+      //   type: 'div',
+      //   children: 'text',
+      // };
 
-      const text = {
-        type: 'h1',
-        children: '我是文本节点',
-      };
+      // const text = {
+      //   type: 'h1',
+      //   children: '我是文本节点',
+      // };
 
-      const textArr = {
-        type: 'h1',
-        props: {
-          class: '1',
-          id: '2',
-          onclick: [
-            () => {
-              console.log(1);
-            },
-            () => {
-              console.log(2);
+      // const textArr = {
+      //   type: 'h1',
+      //   props: {
+      //     class: '1',
+      //     id: '2',
+      //     onclick: [
+      //       () => {
+      //         console.log(1);
+      //       },
+      //       () => {
+      //         console.log(2);
+      //       },
+      //     ],
+      //   },
+      //   children: [
+      //     {
+      //       type: 'span',
+      //       children: '1',
+      //       props: {
+      //         onclick: () => {
+      //           console.log(3, 'log');
+      //         },
+      //       },
+      //     },
+      //     {
+      //       type: 'span',
+      //       children: '2',
+      //     },
+      //   ],
+      // };
+
+      // renderer.render(textArr, document.querySelector('#app'));
+
+      // 例子1事件冒泡 和事件更新机制结合导致的问题
+      // 没解决之前 第一次点击 p  div的 事件也会执行
+      const { effect, ref } = VueReactivity;
+
+      const bol = ref(false);
+
+      effect(() => {
+        // 创建 vnode
+        const vnode = {
+          type: 'div',
+          props: bol.value
+            ? {
+                onClick: () => {
+                  console.log(222, 'log');
+                  alert('父元素 clicked');
+                },
+              }
+            : {},
+          children: [
+            {
+              type: 'p',
+              props: {
+                onClick: () => {
+                  console.log(111, 'log');
+                  bol.value = true;
+                },
+              },
+              children: 'text',
             },
           ],
-        },
-        children: [
-          {
-            type: 'span',
-            children: '1',
-            props: {
-              onclick: () => {
-                console.log(3, 'log');
-              },
-            },
-          },
-          {
-            type: 'span',
-            children: '2',
-          },
-        ],
-      };
-
-      renderer.render(textArr, document.querySelector('#app'));
+        };
+        // 渲染 vnode
+        renderer.render(vnode, document.querySelector('#app'));
+      });
     </script>
   </body>
 </html>
