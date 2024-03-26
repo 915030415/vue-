@@ -413,7 +413,36 @@
         Object.defineProperty(wrapper, '__v_isRef', {
           value: true,
         });
-        return shallowReactive(wrapper);
+        return reactive(wrapper);
+      }
+
+      // 解决例子6
+      function toRef(target, key) {
+        const wrapper = {
+          get value() {
+            return target[key];
+          },
+          set value(val) {
+            target[key] = val;
+          },
+        };
+        Object.defineProperty(wrapper, '__v_isRef', {
+          value: true,
+        });
+        return wrapper;
+      }
+
+      // 解决例子6
+      function toRefs(target) {
+        const wrapper = {};
+        for (const key in target) {
+          wrapper[key] = toRef(target, key);
+        }
+        Object.defineProperty(wrapper, '__v_isRef', {
+          value: true,
+        });
+
+        return wrapper;
       }
 
       // 修改长度 也会触发 副作用函数
@@ -472,11 +501,66 @@
       // });
 
       // 例子5
-      let a = ref(1);
+      // let a = ref(1);
+      // effect(() => {
+      //   console.log(a.value);
+      // });
+      // a.value = 2;
+
+      // 例子6
+      // 解决响应式丢失问题
+      const obj = reactive({ a: 1, b: 2 });
+      // let copyObj = {
+      //   ...obj,
+      // };
+      //  等价于
+      // let copyObj = {
+      //   a:1,
+      //   b:2
+      // };
+      // 解决
+      // let copyObj2 = {
+      //   a: {
+      //     get value() {
+      //       return obj.a;
+      //     },
+      //   },
+      //   b: {
+      //     get value() {
+      //       return obj.b;
+      //     },
+      //   },
+      // };
+      // effect(() => {
+      //   console.log(copyObj.a, 'log');
+      // });
+      // obj.a = 2;
+
+      // effect(() => {
+      //   console.log(copyObj2.a.value, 'log');
+      // });
+      // obj.a = 3;
+
+      // let copyObj3 = {
+      //   a: toRef(obj, 'a'),
+      //   b: toRef(obj, 'b'),
+      // };
+
+      // effect(() => {
+      //   console.log(copyObj3.a.value, 'log');
+      // });
+      // obj.a = 3;
+      // copyObj3.a.value = 4;
+
+      let copyObj4 = {
+        ...toRefs(obj),
+      };
+
       effect(() => {
-        console.log(a.value);
+        console.log(copyObj4.a.value, 'log');
       });
-      a.value = 2;
+      obj.a = 3;
+      copyObj4.a.value = 4;
     </script>
   </body>
 </html>
