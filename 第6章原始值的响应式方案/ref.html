@@ -445,9 +445,28 @@
         return wrapper;
       }
 
+      // 解决例子7
+      // vue3 setup 函数就是用这个包裹的
+      function proxyRefs(target) {
+        return new Proxy(target, {
+          get(target, key, receiver) {
+            const val = Reflect.get(target, key, receiver);
+            return val.__v_isRef ? val.value : val;
+          },
+          set(target, key, newValue, receiver) {
+            const val = target[key]; // 获取老val
+            if (val.__v_isRef) {
+              val.value = newValue;
+              return true;
+            }
+            return Reflect.set(target, key, newValue, receiver);
+          },
+        });
+      }
+
       // 修改长度 也会触发 副作用函数
-      let data1 = ['foo', 'ccc'];
-      let arrProxy = reactive(data1);
+      // let data1 = ['foo', 'ccc'];
+      // let arrProxy = reactive(data1);
       // effect(() => {
       //   console.log(arrProxy.length);
       // });
@@ -509,7 +528,7 @@
 
       // 例子6
       // 解决响应式丢失问题
-      const obj = reactive({ a: 1, b: 2 });
+      // const obj = reactive({ a: 1, b: 2 });
       // let copyObj = {
       //   ...obj,
       // };
@@ -552,15 +571,35 @@
       // obj.a = 3;
       // copyObj3.a.value = 4;
 
-      let copyObj4 = {
-        ...toRefs(obj),
-      };
+      // let copyObj4 = {
+      //   ...toRefs(obj),
+      // };
 
+      // effect(() => {
+      //   console.log(copyObj4.a.value, 'log');
+      // });
+      // obj.a = 3;
+      // copyObj4.a.value = 4;
+
+      // 例子7
+      //       自动脱 ref
+      // toRefs 函数的确解决了响应丢失问题，但同时也带来了新的问
+      // 题。由于 toRefs 会把响应式数据的第一层属性值转换为 ref，因此
+      // 必须通过 value 属性访问值，如以下代码所示：
+      const obj = reactive({ foo: 1, bar: 2 });
+      // obj.foo; // 1
+      // obj.bar; // 2
+
+      const newObj = { ...toRefs(obj) };
+      // // 必须使用 value 访问值
+      // newObj.foo.value; // 1
+      // newObj.bar.value; // 2
+
+      const newObj1 = proxyRefs(newObj);
       effect(() => {
-        console.log(copyObj4.a.value, 'log');
+        console.log(newObj1.foo);
       });
-      obj.a = 3;
-      copyObj4.a.value = 4;
+      newObj1.foo = 333;
     </script>
   </body>
 </html>
