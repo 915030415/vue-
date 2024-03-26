@@ -586,20 +586,30 @@
       // toRefs 函数的确解决了响应丢失问题，但同时也带来了新的问
       // 题。由于 toRefs 会把响应式数据的第一层属性值转换为 ref，因此
       // 必须通过 value 属性访问值，如以下代码所示：
-      const obj = reactive({ foo: 1, bar: 2 });
+      // const obj = reactive({ foo: 1, bar: 2 });
       // obj.foo; // 1
       // obj.bar; // 2
 
-      const newObj = { ...toRefs(obj) };
+      // const newObj = { ...toRefs(obj) };
       // // 必须使用 value 访问值
       // newObj.foo.value; // 1
       // newObj.bar.value; // 2
 
-      const newObj1 = proxyRefs(newObj);
+      // const newObj1 = proxyRefs(newObj);
+      // effect(() => {
+      //   console.log(newObj1.foo);
+      // });
+      // newObj1.foo = 333;
+
+      // 例子8
+      //       实际上，自动脱 ref 不仅存在于上述场景。在 Vue.js 中，
+      // reactive 函数也有自动脱 ref 的能力，如以下代码所示：
+
+      const count = ref(0);
+      const obj = reactive({ count }); //需要改造reactive 让其自动 脱ref
       effect(() => {
-        console.log(newObj1.foo);
+        console.log(obj.count, 'log');
       });
-      newObj1.foo = 333;
     </script>
   </body>
 </html>
