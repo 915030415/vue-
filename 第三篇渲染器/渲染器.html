@@ -70,10 +70,10 @@
           }
 
           // 给子dom进行更新
-          patchChildren(n1, n2, container);
+          patchChildren(n1, n2, el);
         }
         // 给vnod1 和 vnode2  更新 对应的子dom
-        function patchChildren(n1, n2, el) {
+        function patchChildren(n1, n2, container) {
           if (typeof n2.children === 'string') {
             // 新子节点是string
             if (Array.isArray(n1.children)) {
@@ -85,6 +85,36 @@
           } else if (Array.isArray(n2.children)) {
             if (Array.isArray(n1.children)) {
               // 新旧节点都输数组 那就进行 diff 算法
+
+              const oldChildren = n1.children;
+              const newChildren = n2.children;
+
+              let lastIndex = 0;
+              // 遍历新的 children
+              for (let i = 0; i < newChildren.length; i++) {
+                const newVNode = newChildren[i];
+                let j = 0;
+                // 遍历旧的 children
+                for (j; j < oldChildren.length; j++) {
+                  const oldVNode = oldChildren[j];
+                  // 如果找到了具有相同 key 值的两个节点，则调用 `patch` 函数更新之
+                  if (newVNode.key === oldVNode.key) {
+                    patch(oldVNode, newVNode, container);
+                    if (j < lastIndex) {
+                      // 需要移动
+                      const prevVNode = newChildren[i - 1];
+                      if (prevVNode) {
+                        const anchor = prevVNode.el.nextSibling;
+                        insert(newVNode.el, container, anchor);
+                      }
+                    } else {
+                      // 更新 lastIndex
+                      lastIndex = j;
+                    }
+                    break; // 这里需要 break
+                  }
+                }
+              }
             } else {
               // 否则不管旧节点是 空 还是文本
               // 先 置空旧节点 再 循环遍历 子数字节点 进行初始化
@@ -117,28 +147,6 @@
           if (parent) {
             parent.removeChild(vnode.el);
           }
-        }
-        function render(vnode, container) {
-          if (vnode) {
-            // 新 vnode 存在，将其与旧 vnode 一起传递给 patch 函数进行打补丁
-            patch(container._vnode, vnode, container);
-          } else {
-            if (container._vnode) {
-              // 旧 vnode 存在，且新 vnode 不存在，说明是卸载(unmount)操作
-              // 只需要将 container 内的 DOM 清空即可
-              // 容器的内容可能是由某个或多个组件渲染的，当卸载操作发生
-              // 时，应该正确地调用这些组件的 beforeUnmount、unmounted
-              // 等生命周期函数。
-              // 即使内容不是由组件渲染的，有的元素存在自定义指令，我们应
-              // 该在卸载操作发生时正确执行对应的指令钩子函数。
-              // 使用 innerHTML 清空容器元素内容的另一个缺陷是，它不会移
-              // 除绑定在 DOM 元素上的事件处理函数。
-              // container.innerHTML = ''; 不能这样做
-              // 根据 vnode 获取要卸载的真实 DOM 元素
-              unmount(container._vnode);
-            }
-          }
-          container._vnode = vnode;
         }
 
         // 定义： 打补丁 根据前后 vnode 进行挂载
@@ -188,6 +196,29 @@
           } else if (type === 'xxx') {
             // 处理其他类型的 vnode
           }
+        }
+
+        function render(vnode, container) {
+          if (vnode) {
+            // 新 vnode 存在，将其与旧 vnode 一起传递给 patch 函数进行打补丁
+            patch(container._vnode, vnode, container);
+          } else {
+            if (container._vnode) {
+              // 旧 vnode 存在，且新 vnode 不存在，说明是卸载(unmount)操作
+              // 只需要将 container 内的 DOM 清空即可
+              // 容器的内容可能是由某个或多个组件渲染的，当卸载操作发生
+              // 时，应该正确地调用这些组件的 beforeUnmount、unmounted
+              // 等生命周期函数。
+              // 即使内容不是由组件渲染的，有的元素存在自定义指令，我们应
+              // 该在卸载操作发生时正确执行对应的指令钩子函数。
+              // 使用 innerHTML 清空容器元素内容的另一个缺陷是，它不会移
+              // 除绑定在 DOM 元素上的事件处理函数。
+              // container.innerHTML = ''; 不能这样做
+              // 根据 vnode 获取要卸载的真实 DOM 元素
+              unmount(container._vnode);
+            }
+          }
+          container._vnode = vnode;
         }
 
         return {
@@ -325,34 +356,34 @@
 
       const bol = ref(false);
 
-      effect(() => {
-        // 创建 vnode
-        const vnode = {
-          type: 'div',
-          props: bol.value
-            ? {
-                onClick: () => {
-                  console.log(222, 'log');
-                  alert('父元素 clicked');
-                },
-              }
-            : {},
-          children: [
-            {
-              type: 'p',
-              props: {
-                onClick: () => {
-                  console.log(111, 'log');
-                  bol.value = true;
-                },
-              },
-              children: 'text',
-            },
-          ],
-        };
-        // 渲染 vnode
-        renderer.render(vnode, document.querySelector('#app'));
-      });
+      // effect(() => {
+      //   // 创建 vnode
+      //   const vnode = {
+      //     type: 'div',
+      //     props: bol.value
+      //       ? {
+      //           onClick: () => {
+      //             console.log(222, 'log');
+      //             alert('父元素 clicked');
+      //           },
+      //         }
+      //       : {},
+      //     children: [
+      //       {
+      //         type: 'p',
+      //         props: {
+      //           onClick: () => {
+      //             console.log(111, 'log');
+      //             bol.value = true;
+      //           },
+      //         },
+      //         children: 'text',
+      //       },
+      //     ],
+      //   };
+      //   // 渲染 vnode
+      //   renderer.render(vnode, document.querySelector('#app'));
+      // });
 
       //  例子2 子节点更新 查看 <img src="./新旧子节点对比.jpg" alt="" /> 图片
 
@@ -373,6 +404,32 @@
         type: Comment,
         children: '我是注释内容',
       };
+
+      // 简单diff
+      const oldVNode = {
+        type: 'div',
+        children: [
+          { type: 'p', children: '1', key: 1 },
+          { type: 'p', children: '2', key: 2 },
+          { type: 'p', children: 'hello', key: 3 },
+        ],
+      };
+
+      const newVNode = {
+        type: 'div',
+        children: [
+          { type: 'p', children: 'world', key: 3 },
+          { type: 'p', children: '1', key: 1 },
+          { type: 'p', children: '2', key: 2 },
+        ],
+      };
+
+      // 首次挂载
+      renderer.render(oldVNode, document.querySelector('#app'));
+      setTimeout(() => {
+        // 1 秒钟后更新
+        renderer.render(newVNode, document.querySelector('#app'));
+      }, 1000);
     </script>
   </body>
 </html>
