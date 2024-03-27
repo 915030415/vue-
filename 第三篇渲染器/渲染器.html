@@ -53,9 +53,53 @@
           const el = (n2.el = n1.el);
           const oldProps = n1.props;
           const newProps = n2.props;
+
+          for (const key in newProps) {
+            // 更新 当前dom上的属性
+            if (newProps[key] !== oldProps[key]) {
+              patchProps(el, key, oldProps[key], newProps[key]);
+            }
+          }
+
+          for (const key in oldProps) {
+            // 删除户dom上没有了的的属性
+            if (!(key in newProps)) {
+              patchProps(el, key, oldProps[key], null);
+            }
+          }
+
+          // 给子dom进行更新
+          patchChildren(n1, n2, container);
         }
         // 给vnod1 和 vnode2  更新 对应的子dom
-        function patchChildren(n1, n2, el) {}
+        function patchChildren(n1, n2, el) {
+          if (typeof n2.children === 'string') {
+            // 新子节点是string
+            if (Array.isArray(n1.children)) {
+              //旧节点是 数组 那就卸载 卸载旧子节点
+              n1.children.forEach((n) => unmount(n));
+            }
+            // 卸载后 或者 不管 旧节点 是 文本 还是空 重新设置为 文本就行
+            setElementText(container, n2.children);
+          } else if (Array.isArray(n2.children)) {
+            if (Array.isArray(n1.children)) {
+              // 新旧节点都输数组 那就进行 diff 算法
+            } else {
+              // 否则不管旧节点是 空 还是文本
+              // 先 置空旧节点 再 循环遍历 子数字节点 进行初始化
+              n2.children.forEach((n) => patch(null, n, container));
+            }
+          } else {
+            // 新节点是 null的情况
+            if (Array.isArray(n1.children)) {
+              // 旧节点 是 数组的话 那就 循环卸载
+              n1.children.forEach((c) => unmount(c));
+            } else if (typeof n1.children === 'string') {
+              // 否则 文本 就置空 为null的情况不用管 没变
+              setElementText(container, '');
+            }
+          }
+        }
 
         // 定义： 打补丁 根据前后 vnode 进行挂载
         // 一： n1 存在 但类型不同 先卸载 旧节点 n1 设置为null 再走初次渲染步骤
