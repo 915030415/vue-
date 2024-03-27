@@ -25,7 +25,8 @@
         return key in el; // 用 in 操作符判断 key 是否存在对应的 DOM Properties
       }
       function createRenderer(options) {
-        const { createElement, insert, setElementText, patchProps } = options;
+        const { createElement, insert, setElementText, patchProps, createText, setText } =
+          options;
         function mountElement(vnode, container) {
           // 定义 给定vnode 将vnode 对应的dom 挂载上去
           const el = createElement(vnode.type);
@@ -101,32 +102,6 @@
           }
         }
 
-        // 定义： 打补丁 根据前后 vnode 进行挂载
-        // 一： n1 存在 但类型不同 先卸载 旧节点 n1 设置为null 再走初次渲染步骤
-        // 二： 根据不vnode 不同类型 进行不同操作
-        // 二：1 n1 不存走 走 初次渲染步骤
-        // 2 n1 不存在 走 更新操作
-        function patch(n1, n2, container) {
-          if (n1 && n1.type !== n2.type) {
-            unmount(n1);
-            n1 = null;
-          }
-          // 代码运行到这里，证明 n1 和 n2 所描述的内容相同
-          const { type } = n2;
-          // 如果 n2.type 的值是字符串类型，则它描述的是普通标签元素
-          if (typeof type === 'string') {
-            if (!n1) {
-              mountElement(n2, container);
-            } else {
-              patchElement(n1, n2);
-            }
-          } else if (typeof type === 'object') {
-            // 如果 n2.type 的值的类型是对象，则它描述的是组件
-          } else if (type === 'xxx') {
-            // 处理其他类型的 vnode
-          }
-        }
-
         function unmount(vnode) {
           // 定义 给定vnode 将该vnode 对应的dom 从父dom里面卸载
           //           在 unmount 函数内，我们有机会调用绑定在 DOM 元素上的指令
@@ -160,6 +135,49 @@
             }
           }
           container._vnode = vnode;
+        }
+
+        // 定义： 打补丁 根据前后 vnode 进行挂载
+        // 一： n1 存在 但类型不同 先卸载 旧节点 n1 设置为null 再走初次渲染步骤
+        // 二： 根据不vnode 不同类型 进行不同操作
+        // 二：1 n1 不存走 走 初次渲染步骤
+        // 2 n1 不存在 走 更新操作
+        function patch(n1, n2, container) {
+          if (n1 && n1.type !== n2.type) {
+            unmount(n1);
+            n1 = null;
+          }
+          // 代码运行到这里，证明 n1 和 n2 所描述的内容相同
+          const { type } = n2;
+          // 如果 n2.type 的值是字符串类型，则它描述的是普通标签元素
+          if (typeof type === 'string') {
+            // 普通 标签 类似于 div 这种
+            if (!n1) {
+              mountElement(n2, container);
+            } else {
+              patchElement(n1, n2);
+            }
+          } else if (typeof type === 'object') {
+            // 如果 n2.type 的值的类型是对象，则它描述的是组件
+          } else if (type === Text) {
+            // 文本节点
+            if (!n1) {
+              // 旧节点不存在 挂载阶段
+              const el = (n2.el = createText(n2.children));
+              insert(el, container);
+            } else {
+              const el = (n2.el = n1.el);
+              if (n2.children !== n1.children) {
+                // 调用 setText 函数更新文本节点的内容
+                setText(el, n2.children);
+              }
+            }
+          } else if (type === Comment) {
+            // 注释节点
+            // 和文本节点类似 但对应的 dom api 为 document.createComment 创建注释节点 的dom
+          } else if (type === 'xxx') {
+            // 处理其他类型的 vnode
+          }
         }
 
         return {
@@ -237,6 +255,14 @@
           } else {
             el.setAttribute(key, nextValue);
           }
+        },
+        createText(text) {
+          // 创造文本节点
+          return document.createTextNode(text);
+        },
+        setText(el, text) {
+          // 为文本节点创建内容
+          el.nodeValue = text;
         },
       });
 
@@ -319,6 +345,21 @@
       });
 
       //  例子2 子节点更新 查看 <img src="./新旧子节点对比.jpg" alt="" /> 图片
+
+      // 例子3
+      // 文本节点的 type 标识
+      const Text = Symbol();
+      // 注释节点的 type 标识
+      const Comment = Symbol();
+
+      const newVNode2 = {
+        type: Text,
+        children: '我是文本内容',
+      };
+      const newVNode3 = {
+        type: Comment,
+        children: '我是注释内容',
+      };
     </script>
   </body>
 </html>
