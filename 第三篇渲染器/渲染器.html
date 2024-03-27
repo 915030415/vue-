@@ -110,6 +110,10 @@
           // 型。如果该虚拟节点描述的是组件，则我们有机会调用组件相关
           // 的生命周期函数。
           const parent = vnode.el.parentNode;
+          if (vnode.type === Fragment) {
+            vnode.children.forEach((c) => unmount(c));
+            return;
+          }
           if (parent) {
             parent.removeChild(vnode.el);
           }
@@ -175,6 +179,12 @@
           } else if (type === Comment) {
             // 注释节点
             // 和文本节点类似 但对应的 dom api 为 document.createComment 创建注释节点 的dom
+          } else if (type === Fragment) {
+            if (!n1) {
+              n2.children.forEach((c) => patch(null, c, container));
+            } else {
+              patchChildren(n1, n2, container);
+            }
           } else if (type === 'xxx') {
             // 处理其他类型的 vnode
           }
@@ -351,6 +361,9 @@
       const Text = Symbol();
       // 注释节点的 type 标识
       const Comment = Symbol();
+
+      // 多根节点的包裹
+      const Fragment = Symbol();
 
       const newVNode2 = {
         type: Text,
