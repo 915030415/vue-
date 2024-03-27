@@ -4,9 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Document</title>
+    <style>
+      .n1 {
+        width: 300px;
+        height: 300px;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <img src="./新旧子节点对比.jpg" alt="" class="n1" />
     <script src="https://unpkg.com/@vue/reactivity@3.0.5/dist/reactivity.global.js"></script>
     <script>
       // \b(0[0-9]|[1-4][0-9])\b
@@ -20,6 +27,7 @@
       function createRenderer(options) {
         const { createElement, insert, setElementText, patchProps } = options;
         function mountElement(vnode, container) {
+          // 定义 给定vnode 将vnode 对应的dom 挂载上去
           const el = createElement(vnode.type);
           vnode.el = el; //  dom 和 vnode 直接建立联系
 
@@ -40,7 +48,16 @@
           insert(el, container);
         }
 
-        // 打补丁
+        // 定义：给vnod1 和 vnode2  当前dom 和对应的子 dom
+        function patchElement(n1, n2) {
+          const el = (n2.el = n1.el);
+          const oldProps = n1.props;
+          const newProps = n2.props;
+        }
+        // 给vnod1 和 vnode2  更新 对应的子dom
+        function patchChildren(n1, n2, el) {}
+
+        // 定义： 打补丁 根据前后 vnode 进行挂载
         // 一： n1 存在 但类型不同 先卸载 旧节点 n1 设置为null 再走初次渲染步骤
         // 二： 根据不vnode 不同类型 进行不同操作
         // 二：1 n1 不存走 走 初次渲染步骤
@@ -57,7 +74,7 @@
             if (!n1) {
               mountElement(n2, container);
             } else {
-              // patchElement(n1, n2);
+              patchElement(n1, n2);
             }
           } else if (typeof type === 'object') {
             // 如果 n2.type 的值的类型是对象，则它描述的是组件
@@ -67,6 +84,7 @@
         }
 
         function unmount(vnode) {
+          // 定义 给定vnode 将该vnode 对应的dom 从父dom里面卸载
           //           在 unmount 函数内，我们有机会调用绑定在 DOM 元素上的指令
           // 钩子函数，例如 beforeUnmount、unmounted 等。
           // 当 unmount 函数执行时，我们有机会检测虚拟节点 vnode 的类
@@ -113,14 +131,17 @@
           return document.createElement(tag);
         },
         setElementText(el, text) {
+          // 定义：将dom 元素上 设置文本
           el.textContent = text;
         },
         insert(el, parent, anchor = null) {
+          // 定义：dom 插入到 给定的父dom中
           parent.insertBefore(el, anchor);
         },
         // 将属性设置相关操作封装到 patchProps 函数中，并作为渲染器选项传递
         // 可以约定，在 vnode.props 对 象中，凡是以字符串 on 开头的属性都视作事件
         patchProps(el, key, prevValue, nextValue) {
+          /// 定义： 对比和 将属性设置到dom上
           // 匹配以 on 开头的属性，视其为事件
           if (/^on/.test(key)) {
             // 根据属性名称得到对应的事件名称，例如 onClick ---> click
@@ -252,6 +273,8 @@
         // 渲染 vnode
         renderer.render(vnode, document.querySelector('#app'));
       });
+
+      //  例子2 子节点更新 查看 <img src="./新旧子节点对比.jpg" alt="" /> 图片
     </script>
   </body>
 </html>
